@@ -1,0 +1,58 @@
+---
+title: "GR5224 Homework 1, Due July 14, 2025 at 6PM"
+format: 
+  pdf:
+    number-sections: true
+    documentclass: article
+    include-in-header:
+      text: |
+        \usepackage{amsmath}
+        \usepackage{fullpage}
+pdf-engine: xelatex
+editor: visual
+execute: 
+  echo: true
+keep-tex: true
+---
+
+# Gambling
+
+Watch this [video](https://youtu.be/gEsWrhJM95o?feature=shared) that was hosted by an employee of Bloomberg Global Finance named Sonali Basak. Basak interviews a blackjack player (who also runs a hedge fund) and two former professional poker players (one of whom also runs a hedge fund) about the broader implications of their strategies in these games. If you would like to read the rules of [blackjack](https://en.wikipedia.org/wiki/Blackjack) or [poker](https://en.wikipedia.org/wiki/Texas_hold_%27em), you can do so, but it is not really necessary.
+
+The word "Bayesian" is not used in this video, but the discussion overlaps with some of the topics that we have discussed in the first week of 5224. Write a one-page essay that explicates what aspects of the video (you are not responsible for the online comments) are consistent with the Bayesian approach to decision-making and what aspects might be more consistent with some non-Bayesian approach to quantitative analysis. What parts of the video do you agree with and what parts do you disagree with? In formulating your essay, it is essential that you refer to specific moments in the video by their timestamp when responding to them. What do the perspectives in the video imply about a Bayesian approach to investing in the stock market, creating a startup company, or other risky business endeavor?
+
+# Economic Growth
+
+The total output of an economy is a concept that is used in many different fields. However, no country "counts" up all the transactions that occur within its jurisdiction. Rather, what is referred to as "data" on Gross Domestic Product (GDP) is the output of some model, and different models produce different values of the same theoretical concept.
+
+In addition, there are (at least) two different approaches to modeling it, either as total money spent or as total income received. To better understand the two methods that are used by the U.S. government to estimate its annualized growth rate, first read this [paper](https://obamawhitehouse.archives.gov/sites/default/files/docs/gdo_issue_brief_final.pdf).
+
+To attempt to reduce confusion, let's refer to $\mu_t$ as the *concept* of percentage growth in total (inflation-adjusted) economic output in period $t$. Then, $P_t$ is an estimate of $\mu_t$ produced by the expenditure approach to measuring GDP. Conversely, $I_t$ is another estimate of $\mu_t$ produced by the income approach to measuring Gross Domestic Income (GDI).
+
+Assume that$$P_t = \mu_t + \epsilon_t$$ $$I_t = \mu_t + \nu_t$$
+
+where $\epsilon_t$ is the error in GDP growth and $\nu_t$ is the error in GDI growth, which are assumed to be independent of each other (and $\mu_t$) and normal with a common expectation of zero and a common standard deviation of $0.7$.
+
+## Prior Distribution
+
+Suppose your prior beliefs about $\mu_t$ when $t$ corresponds to the first quarter of 2025 are described by a normal distribution with expectation $m$ and standard deviation $s$. What values of $m$ and $s$ are consistent with what you believed on December 31, 2024 about U.S. economic growth in the first quarter of 2025. If you were hanging out at Times Square on December 31, 2024, you could consult what professional forecasters were [forecasting](https://www.philadelphiafed.org/surveys-and-data/real-time-data-research/spf-q4-2024) as of November 15, 2024 (after the results of the presidential election were clear). However, it should always be kept in mind that professional economic forecasters are [not particularly good](https://www.philadelphiafed.org/surveys-and-data/real-time-data-research/error-statistics) at forecasting.
+
+Draw $R = 1,000,000$ times from this normal prior distribution and store the results in a column called `mu`.
+
+## Prior Predictive Distribution
+
+For each of the $R$ realizations of $\mu$, draw GDP growth from a normal distribution with an expectation $\mu$ and a standard deviation of $\sigma = 0.7$ and store the results in an additional column called `GDP`. Then, for each of the $R$ realizations of $\mu$, draw GDI growth independently from a normal distribution with an expectation of $\mu$ and a standard deviation of $\sigma = 0.7$ and store them in an additional column called `GDO`. Finally, form a column called `GDO` that is the average of `GDP` and `GDI`.
+
+Make a histogram or kernel density plot of these $R$ simulated predictions of `GDO`. How would you describe the distribution that you see in your plot.
+
+## First Quarter of 2025
+
+[According](https://www.bea.gov/news/2025/gross-domestic-product-1st-quarter-2025-third-estimate-gdp-industry-and-corporate-profits) to the US government on June 26, 2025, GDP growth in the first quarter of 2025 was (estimated to be) $-0.5$ percent and GDI growth was (estimated to be) $+0.2$ percent. Retain only those simulations from the previous subproblem where *both* `GDP` rounds to $-0.5$ and `GDI` rounds to $0.2$.
+
+-   What does the proportion of the $R$ simulations that satisfy both of these criteria tell you, as regards to Bayes' Rule?
+
+-   Make a histogram or kernel density plot of the realizations of `mu` from the subset that satisfies both criteria. How would you describe this distribution and how does it differ from your prior distribution on $\mu$?
+
+## Second Quarter of 2025
+
+The US government will not release data on growth in the second quarter of 2025 until July 30, 2025. However, you can describe your beliefs about $\mu$ for the second quarter of 2025 today and update them on July 30. What normal distribution describes your beliefs about $\mu$ for the second quarter of 2025? Why do you believe that?
