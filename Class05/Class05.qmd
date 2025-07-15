@@ -1,0 +1,200 @@
+---
+title: "Bayesian Principles"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+---
+
+## Review of Last Week
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+$$
+f\left(\theta \mid y, \dots\right) = \frac{f\left(\theta \bigcap y \mid \dots\right)}{f\left(\bcancel{\theta} \bigcap y \mid \dots\right)} =
+\frac{f\left(\theta \mid \dots\right)f\left(y \mid \theta\right)}{\int_{-\infty}^\infty f\left(\theta \mid \dots \right)f\left(y \mid \theta\right) d\theta}
+$$
+
+-   For $\theta$ defined on a *continuous* parameter space, $\Theta$, the prior $f\left(\theta \mid \dots\right)$ and posterior $f\left(\theta \mid y, \dots\right)$ PDFs are different but both (should) integrate to $1$ over $\Theta$
+
+-   The definite integral that defines the marginal(ized) PDF or PMF of $y$ under the model but irrespective of $\theta$ usually can't be calculated exactly with a finite number of elementary operations (particularly when there are $\geq 2$ parameters)
+
+## BioNTech / Pfizer VE$\left(\theta\right) = \frac{1 - 2 \theta}{1 - \theta}$
+
+```{r}
+#| echo: false
+#| message: false
+library(patchwork)
+library(dplyr)
+library(ggplot2)
+theta <- tibble(prior = rbeta(10^7, 0.700102, 1),
+                posterior = rbeta(10^7, 0.700102 + 8, 1 + 94 - 8))
+VE <- bind_rows(transmute(theta, state = "prior",
+                          value = (1 - 2 * prior) / (1 - prior)),
+                transmute(theta, state = "posterior",
+                          value = (1 - 2 * posterior) / (1 - posterior)))
+g_theta <- ggplot() +
+  xlim(0, 1) +
+  geom_function(fun = dbeta, args = list(shape1 = 0.700102, shape2 = 1),
+                color = "#00BFC4") +
+  geom_function(fun = dbeta, color = "#F8766D",
+                args = list(shape1 = 0.700102 + 8, shape2 = 1 + 94 - 8)) +
+  scale_y_continuous(trans = "log10", limits = c(1.5e-2, 50)) +
+  labs(x = "theta",
+       y = "log-density")
+
+g_VE <- ggplot(VE) +
+  geom_density(aes(value, color = state)) + 
+  xlim(-5, 1) +
+  scale_y_continuous(trans = "log10", limits = c(1.5e-2, 50)) +
+  labs(x = "Vaccine Effectiveness (VE)",
+       y = "log-density")
+
+g_theta + g_VE
+```
+
+## 3 or 4 Tasks of Bayesian Inference
+
+-   [Bayes Rules]{.underline} enumerates three tasks for Bayesian inference, which are elaborated on by Lancaster:
+
+    1.  Estimation of Parameters
+
+    2.  Evaluating Hypotheses
+
+    3.  Prediction
+
+-   Anti-Bayesian methods also involve these three tasks, but Bayesians do them in different and better ways
+
+-   Lancaster adds a fourth, namely Making Decisions, which we discussed on HW1 in the context of gambling
+
+## (1) Estimation of Parameters
+
+1.  Analytically integrate to get the denominator of Bayes' Rule
+
+    -   Only possible in a few [simple models](https://en.wikipedia.org/wiki/Conjugate_prior#Table_of_conjugate_distributions), e.g., beta-binomial
+
+2.  Numerically integrate to get the denominator of Bayes' Rule
+
+    -   Only feasible when there are very few parameters
+
+3.  Draw from the joint distribution and keep realizations of the parameters iff the outcome realization matches the data
+
+    -   Only possible with discrete outcomes and small $N$
+
+4.  Perform MCMC to draw from the posterior distribution
+
+    -   Works for any posterior PDF that is differentiable w.r.t. $\theta$
+
+## Example of Denominator Calculation
+
+-   If the prior on $\theta$ is Beta with shape parameters $a$, and $b$ and the likelihood is binomial with successes $y$, size $n$, and success probability $\theta$, then the marginal(ized) probability is $\Pr\left(y \mid a, b, n\right) = f\left(\bcancel{\theta} \bigcap y \mid, a, b, n\right) = {n \choose y}\frac{B\left(a + y, b + n - y\right)}{B\left(a,b\right)}$
+
+. . .
+
+```{r}
+a <- 0.700102; b <- 1; n <- 94; y <- 8
+a_star <- a + y; b_star <- b + n - y
+choose(n, y) * beta(a_star, b_star) / beta(a, b) # analytical
+joint <- function(theta) dbeta(theta, a, b) * dbinom(y, n, theta)
+integrate(joint, lower = 0, upper = 1) # numerical
+R <- 10^7
+mean(rbinom(R, n, prob = rbeta(R, a, b)) == y) # simulation
+```
+
+## Example of Parameter Estimation
+
+-   Since $\Pr\left(y \mid a, b, n\right)$ is known in the beta-binomial case, we know that $\theta \mid a, b, y, n$ is distributed Beta with shape parameters $a^\ast = a + y$ and $b^\ast = b + n - y$
+
+-   The posterior expectation of $\theta$ is $\mathbb{E}\left[\theta \mid a,b,y,n\right] = \frac{a^\ast}{a^\ast + b^\ast} = \frac{a + y}{a + b + n}$, which is between the prior expectation, $\frac{a}{a + b}$ and the average of the data, $\frac{y}{n}$, but approaches the latter as $n \uparrow \infty$ for any fixed $a$ and $b$
+
+-   Since $a^\ast = a + y$ and $b^\ast = b + n - y$, it should be clear that it does not matter if you update your prior $n$ times with one data point each or update your prior once with all $n$ data points because you ultimately end up in the same place
+
+## (2) Evaluating Hypotheses
+
+-   Does *not* entail testing a point null hypothesis
+
+-   Testing means evaluating $\Pr\left(\mbox{hypothesis} \mid \mbox{evidence}\right)$
+
+-   FDA example: What are the prior and posterior probability that $\mbox{VE}\left(\theta\right) = \frac{1 - 2\theta}{1 - \theta} > 0.3$?
+
+. . .
+
+```{r}
+#| message: false
+library(dplyr)
+tibble(prior_theta = rbeta(R, a, b),
+       posterior_theta = rbeta(R, a_star, b_star),
+       prior_VE = (1 - 2 * prior_theta) / (1 - prior_theta),
+       posterior_VE = (1 - 2 * posterior_theta) / 
+         (1 - posterior_theta)) |> 
+  summarize(prior_prob = mean(prior_VE > 0.3),
+            posterior_prob = mean(posterior_VE > 0.3))
+```
+
+## Testing Point Null Hypotheses
+
+-   Frequentists cannot --- because $\theta$ and $\mbox{VE}\left(\theta\right)$ are not considered random variables --- ask questions like "What is $\Pr\left(\mbox{VE}\left(\theta\right) > 0.3 \mid n, y\right)$?" So, instead they ask questions like "What is $\Pr\left(\widehat{\theta} \leq \frac{8}{n} \mid \mbox{VE}\left(\theta\right) = 0.3\right)$?" because $\widehat{\theta} = \frac{y}{n}$ is a random variable that takes different values each time $n$ people in a trial get covid, which can be simulated as:
+
+```{r}
+# If theta = (1 - VE) / (2 - VE), what is the implication of VE = 0.3?
+tibble(y = rbinom(R, size = n, prob = (1 - 0.3) / (2 - 0.3)),
+       theta_hat = y / n) |> # maximum likelihood estimator of theta
+  summarize(p_value = mean(theta_hat <= 8 / n))
+```
+
+## Confidence Intervals
+
+-   Some people say that using $p$-values to test a null hypothesis is bad but confidence intervals are good, despite the fact that a confidence interval is a range of values such that if the null hypothesis value, $\theta_0$, were anywhere in that interval, you would fail to reject the null hypothesis
+
+-   A confidence interval is a line segment but people insist on ascribing a (Bayesian) topology to it such that values in the middle are more probable than values near the endpoints
+
+-   The FDA's rule that the 95% confidence interval for $\mbox{VE}\left(\theta\right)$ must exclude $0.3$ merely implies that 2.5% of vaccines whose effectiveness is $0.3$ will get approved
+
+## Neyman on Confidence Intervals
+
+Jerzy Neyman, who invented the confidence interval, [said](https://en.wikipedia.org/wiki/Confidence_interval#Common_misunderstandings)
+
+> I have repeatedly stated that the frequency of correct results will tend to $\alpha$ \[1 minus the type I error rate\]. Consider now the case when a sample is already drawn, and the calculations have given \[particular limits\]. Can we say that in this particular case the probability of the true value \[falling between these limits\] is equal to $\alpha$? The answer is obviously in the negative. The parameter is an unknown constant, and no probability statement concerning its value may be made \dots"
+
+## (3) Prediction
+
+-   Prediction is just the outcome margin of the joint distribution between the parameter(s) and outcome(s)
+
+-   You can use either prior or posterior parameter draws
+
+. . .
+
+```{r}
+tibble(prior_theta = rbeta(R, a, b),
+       posterior_theta = rbeta(R, a_star, b_star),
+       prior_pred = rbinom(R, size = n, prob = prior_theta),
+       posterior_pred = rbinom(R, size = n, prob = posterior_theta)) |> 
+  summarize(prob = mean(posterior_pred < prior_pred))
+```
+
+-   Others use "prediction" to mean "point prediction from $\widehat{\theta}$", rather than from the distribution induced by $\theta \mid a, b, n, y$
+
+## And That's What It's All About
+
+-   What is the distribution of a *future* $y_{N + 1}$ given *past* realizations, $y_1, \dots, y_N$? Do the Bayesian hokey pokey, $f\left(y_{N + 1} \mid y_1, \dots, y_N\right) = f\left(y_{N + 1} \bigcap \bcancel{\theta} \mid y_1, \dots, y_N\right) =$ $\int_\Theta f\left(y_{N + 1} \mid \theta\right) f\left(\theta \mid y_1, \dots, y_N\right) d\theta$
+
+-   In the case of the BioNTech / Pfizer vaccine, this results in
+
+```{r}
+choose(1, 1) * beta(a_star + 1, b_star + 1 - 1) / beta(a_star, b_star)
+```
+
+. . .
+
+-   Supervised learners eschew probabilistic thinking by reasoning $\widehat{\theta} = \frac{y}{n}$ and $\Pr\left(y_{N + 1} \mid \widehat{\theta}\right) = \widehat{\theta} < \frac{1}{2}$ so $y_{N + 1}$ is *classified* as $0$ deterministically but might be a false negative
