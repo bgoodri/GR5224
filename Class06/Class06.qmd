@@ -1,0 +1,347 @@
+---
+title: "Conjugate Models"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+---
+
+## Review of BioNTech / Pfizer
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+$$
+f\left(\theta \mid y, \dots\right) = \frac{f\left(\theta \bigcap y \mid \dots\right)}{f\left(\bcancel{\theta} \bigcap y \mid \dots\right)} =
+\frac{f\left(\theta \mid \dots\right)f\left(y \mid \theta\right)}{\int_{-\infty}^\infty f\left(\theta \mid \dots \right)f\left(y \mid \theta\right) d\theta}
+$$
+
+-   In some cases, the numerator is such that the integral in the denominator can be done in closed form, often with special functions that can be represented as an infinite product
+
+-   If the prior on $\theta$ is Beta with shape parameters $a$, and $b$ and the likelihood is binomial with successes $y$, size $n$, and success probability $\theta$, then the marginal(ized) probability is $\Pr\left(y \mid a, b, n\right) = f\left(\bcancel{\theta} \bigcap y \mid, a, b, n\right) = {n \choose y}\frac{B\left(a + y, b + n - y\right)}{B\left(a,b\right)}$
+
+## Gamma Distribution
+
+-   If $\Omega = \mathbb{R}_+$ and $a, b > 0$, the PDF of a Gamma R.V., $X$, is $$f\left(x \mid a,b\right) = \frac{b^a}{\Gamma\left(a\right)}x^{a - 1}e^{-bx},$$ where $\Gamma\left(a\right) = \int_0^\infty t^{a - 1} e^{-t}dt = \frac{1}{a} \prod\limits_{n = 1}^\infty \frac{1}{1 + \frac{a}{n}} \left(1 + \frac{1}{n}\right)^a$ simplifies to $\left(a - 1\right)!$ iff $a$ is a positive integer
+-   If $a = 1$, the Gamma PDF simplifies to that of an exponential with rate $b$ (i.e. with expectation $1 / b$)
+-   $\mu = \frac{a}{b}$ and $\sigma^2 = \frac{a}{b^2}$ so you can let $a = \frac{\mu^2}{\sigma^2}$ and $b = \frac{\mu}{\sigma^2}$
+
+## Negative Binomial Distribution
+
+-   Suppose $X$ is distributed Poisson with expectation $\mu$ and that $\mu$ has a Gamma prior with shape $a > 0$ and rate $b > 0$
+
+-   The marginal(ized) distribution of $X$ is confusingly called negative binomial and has the (prior predictive) PMF $$\Pr\left(x \mid a,b\right) = f\left(\bcancel{\mu} \bigcap x \mid a,b\right) = \\ \int_0^\infty \frac{b^a}{\Gamma\left(a\right)}\mu^{a - 1}e^{-b\mu} \times \frac{1}{x!} \mu^x e^{-\mu} d\mu = \\
+    \frac{b^a}{\Gamma\left(a\right)} \frac{1}{x!} \int_0^\infty \mu^{a + x - 1}e^{-\left(b + 1\right)\mu} d\mu = \frac{b^a}{\Gamma\left(a\right)} \frac{1}{x!} \frac{\Gamma\left(a + x\right)}{\left(b + 1\right)^{a + x}}$$
+
+## Posterior Distribution of $\mu$ {.smaller}
+
+-   Suppose you observe realized counts $x_1, \dots, x_N$ that are presumed conditionally independent with expectation $\mu$. Under the Gamma prior for $\mu$, the posterior PDF is $$f\left(\mu \mid a,b, x_1, \dots x_N\right) = \frac{f\left(\mu \mid a,b\right)\prod_{n = 1}^N\Pr\left(x_n \mid \mu\right)}{\prod_{n = 1}^N\Pr\left(x_n \mid a,b\right)}$$
+
+-   Note: $\prod\limits_{n = 1}^N \Pr\left(x_n \mid \mu\right) = \prod\limits_{n = 1}^N \frac{\mu^{x_n} e^{-\mu}}{x_n!} = e^{-N\mu} \mu^{\sum\limits_{n = 1}^N x_n}\prod\limits_{n = 1}^N \frac{1}{x_n!}$. Let $s = \sum\limits_{n = 1}^N x_n$ be distributed Poisson with expectation $N\mu$. Then, $$f\left(\mu \mid a,b,s\right) \propto \mu^{a - 1} e^{-b \mu} \mu^s e^{-N\mu} = \mu^{a^\ast - 1} e^{-b^\ast \mu},$$
+
+    which is proportional to a Gamma PDF with shape $a^\ast = a + s$ and rate $b^\ast = b + N$.
+
+-   Posterior predictive distribution is negative binomial with $a^\ast$ and $b^\ast$ rather than $a$ and $b$
+
+## Modern Simulation
+
+```{r}
+#| message: false
+library(dplyr)
+N <- 5
+a <- 1.6
+b <- 0.8
+R <- 10^5
+joint <- function(mu, s = 20) dgamma(mu, a, b) * dpois(s, N * mu)
+tibble(mu = rgamma(R, a, b)) |>
+  rowwise() |> 
+  mutate(S = sum(rpois(N, mu))) |> 
+  ungroup() |> 
+  filter(S == 20) |> # suppose you observed an s of 20
+  summarize(average = mean(mu), 
+            expectation = (a + first(S)) / (b + N),
+            marginal = n() / R,
+            numerical = integrate(joint, lower = 0, upper = Inf)$value,
+            prediction_1 = rnbinom(1, a + first(S), (b + N) / (b + N + 1)))
+```
+
+## Economic Growth Again
+
+-   Suppose the following:
+
+    -   $\mu_t \thicksim \mathcal{N}\left(m,\sqrt{\frac{1}{v \tau}}\right)$
+
+    -   $\tau \thicksim \mathcal{G}\left(a,b\right)$
+
+    -   $P_t \thicksim \mathcal{N}\left(\mu_t, \sqrt{\frac{1}{\tau}}\right)$
+
+    -   $I_t \thicksim \mathcal{N}\left(\mu_t, \sqrt{\frac{1}{\tau}}\right)$
+
+-   Note this utilizes the normal distribution parameterized in terms of its precision, $\tau$
+
+## Posterior Distribution
+
+-   It can be [shown](https://en.wikipedia.org/wiki/Normal-gamma_distribution#Posterior_distribution_of_the_parameters), when conditioning on $n$ observations
+
+    -   $a$ from the prior becomes $a^\ast = a + \frac{n}{2}$ in the posterior
+
+    -   $b$ from the prior in the posterior becomes $b^\ast = b + \frac{nv}{v + n} \frac{\left(\overline{x} - m\right)^2}{2} + \frac{1}{2}\sum_{i = 1}^n \left(x_i - \overline{x}\right)^2$
+
+    -   $v$ from the prior becomes $v^\ast = \frac{a^\ast}{b^\ast}$ in the posterior
+
+    -   $m$ from the prior becomes $m^\ast = \frac{vm + n \overline{x}}{v + n}$
+
+    -   The predictive distribution is in the Student $t$ family and can be evaluated with either the prior or the posterior hyperparameters
+
+## Simulated Growth
+
+```{r}
+R <- 10^7; a <- 4 * 10; b <- 9 * 10; m <- 1.9; v <- 5
+draws <- tibble(tau = rgamma(R, a, b),
+                mu  = rnorm(R, mean =  m, sd = 1 / sqrt(v * tau)),
+                GDP = rnorm(R, mean = mu, sd = 1 / sqrt(tau)),
+                GDI = rnorm(R, mean = mu, sd = 1 / sqrt(tau)))
+```
+
+```{r}
+posterior_draws <- filter(draws, round((GDP + GDI) / 2, digits = 1) == -0.2)
+summarize(posterior_draws, 
+          avg_mu = mean(mu),
+          m_star = (v * m + 2 * -0.2) / (v + 2)) |> unlist()
+summarize(posterior_draws,
+          avg_tau = mean(tau),
+          v_star = (a + 2 / 2) / 
+            (b + 2 * v / (v + 2) * 0.5 * (-0.2 - m)^2 + 
+               0.5 * ((-0.5 - m)^2 + (0.2 - m)^2))) |> unlist()
+```
+
+## Gross Domestic Output (GDO)
+
+-   The introductory [paper](https://obamawhitehouse.archives.gov/sites/default/files/docs/gdo_issue_brief_final.pdf) advocates the use of Gross Domestic Output (GDO), which is an average of GDP and GDI.
+
+-   Since GDO is $\overline{x}$ in the above notation and $n$ would be $2$, $m^\ast$ is GDO if and only if $v = 0$, which would ascribe zero prior precision (i.e. infinite error)
+
+-   No one believes that economic forecasts about $\mu_t$ are completely worthless, but few use Bayesian analysis
+
+## [Linear Regression](https://en.wikipedia.org/wiki/Bayesian_linear_regression) with Matrix Algebra
+
+-   Suppose that
+
+    -   $\mathbf{y} = \mathbf{X} \boldsymbol{\beta} + \boldsymbol{\epsilon}$
+
+    -   $\epsilon_n \thicksim \mathcal{N}\left(0, \sigma\right)$ for all $n$
+
+    -   $\frac{1}{\sigma^2} \thicksim \mathcal{G}\left(a_0,b_0\right)$ where $a_0 = \frac{v_0}{2}$ and $b_0 = \frac{vs_0^2}{2}$
+
+    -   $\boldsymbol{\beta} \mid \sigma^2 \thicksim \mathcal{N}_K\left(\boldsymbol{\mu}_0, \sigma^2 \boldsymbol{\Lambda}_0^{-1}\right)$
+
+-   Posterior distribution is the same family with
+
+    -   $\boldsymbol{\Lambda}_n = \mathbf{X}^\top \mathbf{X} + \boldsymbol{\Lambda_0}$ & $\boldsymbol{\mu}_n = \boldsymbol{\Lambda}_n^{-1}\left(\mathbf{X}^\top \mathbf{X} \widehat{\boldsymbol{\beta}} + \boldsymbol{\Lambda}_0 \boldsymbol{\mu}_0\right)$
+
+    -   $a_n = a_0 + \frac{n}{2}$ & $b_n = b_0 + \frac{\mathbf{y}^\top \mathbf{y} + \boldsymbol{\mu}_0^\top \boldsymbol{\Lambda}_0 \boldsymbol{\mu}_0 - \boldsymbol{\mu}_n^\top \boldsymbol{\Lambda}_n \boldsymbol{\mu}_n}{2}$
+
+## Connection to Supervised Learning
+
+-   Ridge regression finds the posterior mode, assuming $\boldsymbol{\mu}_0 = \mathbf{0}$ and $\boldsymbol{\Lambda}_0 = c \mathbf{I}$
+
+-   Posterior modes are not Bayesian
+
+-   Under these assumptions, supervised learners could get an entire posterior distribution in closed form but they don't
+
+## Dollar Price of Bitcoin
+
+-   What do you think the price of a Bitcoin will be in 50 years?
+
+-   Suppose you think it will be uniformly distributed between $0$ and $\theta$, where $\theta > 0$ is unknown but has a Pareto prior with minimum $k$ and shape $w$
+
+-   Define these two functions to evaluate the inverse CDF of the Pareto distribution and to randomly draw $n$ times from the Pareto distribution
+
+```{r}
+qpareto <- function(p, k, w) k / ( (1 - p)^(1 / w) )
+rpareto <- function(n, k, w) qpareto(runif(n), k, w)
+```
+
+## Cumulative Density Function (CDF)
+
+-   Let $\Theta = \left[k,\infty\right)$ and $k,w > 0$. The CDF of the Pareto distribution is $$
+    F\left(\theta \mid k,w\right) = 1 - \left(\frac{k}{\theta}\right)^w
+    $$ if $\theta \geq k$ or else $F\left(\theta \mid k,w\right) = 0$.
+
+-   How can we define `ppareto` in a R chunk?
+
+. . .
+
+```{r}
+ppareto <- function(x, k, w) ifelse(x >= k, 1 - (k / x)^w, 0)
+```
+
+```{r}
+k <- 123000
+w <- 1.6 # you could choose other positive values
+```
+
+## Probability Density Function (PDF)
+
+-   If the CDF is $F\left(\theta \mid k,w\right) = 1 - \left(\frac{k}{\theta}\right)^w$ , what is the PDF?
+
+. . .
+
+$$
+\frac{\partial F\left(\theta \mid k,w\right)}{\partial \theta} = -w\left(\frac{k}{\theta}\right)^{w - 1} \times \frac{-k}{\theta^2} = \frac{wk^w}{\theta^{w + 1}} = f\left(\theta \mid k,w\right)
+$$
+
+-   If you cannot work that out for yourself, you could type `differentiate 1 - (k / t)^w wrt t` at <https://www.wolframalpha.com/> (which also does integrals)
+
+-   How would we implement the PDF in a R chunk?
+
+. . .
+
+```{r}
+dpareto <- function(x, k, w) ifelse(x >= k, w * k^w / x^(w + 1), 0)
+```
+
+## Graph of Pareto PDF
+
+```{r}
+#| echo: false
+library(ggplot2)
+ggplot() +
+  xlim(0, 500000) +
+  geom_function(fun = dpareto, args = list(k = k, w = w)) +
+  labs(x = "theta",
+       y = "density")
+```
+
+## Expectation
+
+-   What is an expression for $\mathbb{E}\left[\theta \mid k,w\right]$?
+
+. . .
+
+$$\mathbb{E}\left[\theta\right] = \int_{k}^\infty \theta f\left(\theta \mid k, w\right) d\theta =
+  \int_{k}^\infty \theta \frac{w k^w}{\theta^{w + 1}} d\theta = \\
+  \int_{k}^\infty w \left(\frac{k}{\theta}\right)^{w} d\theta = 
+  w k^{w} \int_{k}^\infty \theta^{-w} d\theta = 
+  \left.\frac{w k^{w}}{1 - w} \theta^{1 -w}\right|_{k}^\infty$$If $w \leq 1$, then this definite integral is *infinite*. If $w > 1$, then the expectation of $\theta$ is finite, namely $\mu = \frac{w k^{w}}{w - 1} k^{1 -w} = \frac{w k}{w - 1}$.
+
+-   Can type `integrate w * (k / t)^w from t = k to infinity` at <https://www.wolframalpha.com/>
+
+## Prior Predictive Density Function
+
+-   Suppose $X$ (e.g. the dollar price of Bitcoin in the future) is uniform between $0$ and $\theta$ which has PDF $f\left(x \mid \theta\right) = \frac{1}{\theta}$
+
+-   What is the PDF of $X$ irrespective of $\theta$, if our beliefs about $\theta$ are distributed Pareto with minimum $k$ and shape $w$?
+
+. . .
+
+$$f\left(x \mid k, w\right) = 
+f\left(x \bigcap \bcancel{\theta} \mid k, w\right) =
+\int_{\max\left(k,x\right)}^{\infty} \frac{1}{\theta} 
+\frac{w k^w}{\theta^{w + 1}} d\theta = \\
+w k^w \int_{\max\left(k,x\right)}^{\infty} \theta^{-w - 2} d\theta = 
+\left.w k^w\frac{\theta^{-w - 1}}{-w - 1}\right|_{\max\left(k,x\right)}^\infty = \\
+w k^w \max\left(k,x\right)^{-w - 1} / \left(w + 1\right)$$
+
+```{r}
+#| echo: false
+library(rgl)
+bivariate <- function(theta, x) {
+  dpareto(theta, k, w) * ifelse(x >= k, 1 / theta, 0)
+}
+plot3d(bivariate, xlim = c(k, 3 * 10^5), ylim = c(0, 3 * 10^5),
+       zlab = "f", col = rainbow)
+dir.create("bivariate", showWarnings = FALSE)
+writeWebGL(dir = "bivariate", template = NULL, width = 900, height = 500)
+htmlwidgets::saveWidget(rglwidget(), file.path("bivariate", "index.html"))
+rgl.close()
+```
+
+## Bivariate PDF
+
+```{=html}
+<iframe width="900" height="1800" src="bivariate/index.html"></iframe>
+```
+## Drawing Joint Random Values in R
+
+Draw `R` times from the joint distribution of $\theta \bigcap X \mid k,w$
+
+. . .
+
+```{r}
+draws <- tibble(theta = rpareto(10^6, k, w),
+                X = runif(10^6, min = 0, max = theta))
+```
+
+What is the prior probability that $X > 100,000$?
+
+. . .
+
+```{r}
+summarize(draws, prob = mean(X > 100000))
+```
+
+What is the prior median of $X$?
+
+. . .
+
+```{r}
+summarize(draws, median(X))
+```
+
+## Posterior PDF (Lancaster ex. 1.19)
+
+-   Suppose you observe $x$ (i.e. the dollar price of Bitcoin today)
+
+-   What is the posterior PDF for $\theta \mid k, w, x$?
+
+. . .
+
+$$f\left(\theta \mid k, w, x\right) =
+\frac{ w k^w / \theta^{w + 1} \times 1 / \theta }
+{w k^w \max\left(k,x\right)^{-w - 1} / \left(w + 1\right)} = 
+\frac{w^\ast \left(k^\ast\right)^{w^\ast}}{\theta^{w^\ast + 1}}$$
+
+where $w^\ast = w + 1$ and $k^\ast = \max\left(k,x\right)$
+
+-   The posterior distribution remains in the Pareto family so the Pareto prior is conjugate with the uniform likelihood
+-   Any term in the numerator that doesn't depend on $\theta$ cancels
+
+## Posterior PDF Given $N$ Observations
+
+-   Suppose you have $N$ observations
+
+-   What is the posterior PDF of $\theta \mid k, w, x_1, x_2, \dots, x_N$?
+
+. . .
+
+-   The posterior PDF conditional on $N$ observations can be obtained by updating the Pareto prior $N$ times, yielding $$f\left(\theta \mid k, w, x_1, x_2, \dots, x_N\right) =
+    \frac{w^\ast \left(k^\ast\right)^{w^\ast}}{\theta^{w^\ast + 1}}$$ where $w^\ast = w + N$ and $k^\ast = \max\left(k, x_1, x_2, \dots, x_N\right)$
+
+## Posterior Predictive PDF {.smaller}
+
+-   How would you predict $X$ in $50$ years?
+
+. . .
+
+-   The posterior predictive density for a future $x_{N + 1}$ is in the same form as the prior predictive density found earlier (and can be derived in the same way), except evaluated at $k^\ast$ and $w^\ast$, rather than $k$ and $w$. Do the Bayesian hokey pokey:\
+    $$f\left(x_{N + 1} \mid w, k, x_1, x_2, \dots, x_N\right) = 
+    f\left(x_{N + 1} \bigcap \bcancel{\theta} \mid w, k, x_1, x_2, \dots, x_N\right) = \\
+    \int_k^\infty f\left(x_{N + 1} \mid \theta\right) 
+    f\left(\theta \mid x_1, x_2, \dots, x_N, k, w\right)d\theta = \\
+    \int_{\max\left(k^\ast, x_{N + 1}\right)}^\infty f\left(x_{N + 1} \bigcap \theta \mid 
+    k^\ast, w^\ast\right)d\theta =
+    w^\ast \left(k^\ast\right)^{w^\ast}
+    \frac{\max\left(k^\ast,x_{N + 1}\right)^{-w^\ast - 1}}{w^\ast + 1}$$
+
+-   After you beliefs about $\theta$ have been updated by conditioning on past data, you do not explicitly need the past data any more; i.e. $k^\ast$ and $w^\ast$ are all you need to predict $x_{N + 1}$
