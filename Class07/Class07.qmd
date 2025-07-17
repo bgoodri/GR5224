@@ -1,0 +1,391 @@
+---
+title: "First Generation Markov Chain Monte Carlo"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+preload-iframes: false  
+---
+
+## Bivariate Random Variables
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+-   Suppose $\Omega = \mathbb{R}^2$ (but it works with a subset thereof)
+
+-   $F\left(x, y \mid \theta\right) = \Pr\left(X \leq x \bigcap Y \leq y \mid \theta \right)$ is the CDF
+
+-   $f\left(x, y \mid \theta \right) = \frac{\partial^2}{\partial x\partial y}F\left(x,y\right)$ is the PDF
+
+-   $F\left(x,y \mid \theta\right) = \int_{-\infty}^y \int_{-\infty}^x f\left(u,v \mid \theta\right) du dv$
+
+-   $f_X\left(x \mid \theta\right) = \int_{-\infty}^\infty f\left(x, y \mid \theta\right) dy$ is the marginal(ized) PDF of $X$ and similarly $f_Y\left(y \mid \theta\right) = \int_{-\infty}^\infty f\left(x,y \mid \theta\right) dx$
+
+-   $f_{X \mid Y}\left(x \mid \theta, y\right) = \frac{f\left(x,y\mid \theta\right)}{f_Y\left(y\mid \theta\right)}$ is the conditional PDF of $X$ given that $Y = y$ and similarly $f_{Y \mid X}\left(y \mid \theta, x\right) = \frac{f\left(x,y\mid \theta \right)}{f_X\left(x \mid \theta\right)}$
+
+## Covariance and Correlation
+
+-   Suppose $\Omega = \mathbb{R}^2$ and $Z = g\left(X, Y\right)$. Then, in general, $\mathbb{E}\left[g \mid \theta\right] = \int_{-\infty}^\infty \int_{-\infty}^\infty g\left(x,y\right) f\left(x,y\mid\theta\right)dxdy$
+
+. . .
+
+-   If $g\left(X, Y\right) = \left(X - \mu_X\right) \left(Y - \mu_Y\right)$, then $\mathbb{E}\left[g \mid \theta\right] = \mathbb{E}\left[XY \mid \theta\right] - \mu_X \mu_Y \equiv \sigma_{XY}$ is the covariance
+
+-   If $g\left(X, Y\right) = \left(\frac{X - \mu_X}{\sigma_X}\right) \left(\frac{Y - \mu_Y}{\sigma_Y}\right)$, then $\mathbb{E}\left[g \mid \theta\right]$ $$\begin{eqnarray} &=& \frac{1}{\sigma_X \sigma_Y}\int_{-\infty}^\infty \int_{-\infty}^\infty \left(x - \mu_X\right) \left(y - \mu_Y\right) f\left(x,y \mid \theta\right) dx dy\end{eqnarray}$$ $= \frac{\sigma_{XY}}{\sigma_X \sigma_Y} \equiv \rho \in \left[-1,1\right]$ is the correlation of $X$ and $Y$
+
+## Bivariate Normal over $\Omega = \mathbb{R}^2$
+
+$f\left(x,y\mid \mu_X,\mu_Y,\sigma_X,\sigma_Y,\rho\right) =\\ \frac{1}{2\pi\sigma_X\sigma_Y\sqrt{1-\rho^2}}e^{-\frac{1}{2\left(1-\rho^2\right)} \left(\left(\frac{x - \mu_X}{\sigma_X}\right)^2 + \left(\frac{y - \mu_Y}{\sigma_Y}\right)^2 - 2\rho\frac{x - \mu_X}{\sigma_X}\frac{y - \mu_Y}{\sigma_Y}\right)} = \\ \frac{1}{\sigma_X\sqrt{2\pi}}e^{-\frac{1}{2}\left(\frac{x - \mu_X}{\sigma_X}\right)^2} \times \frac{1}{\color{blue}{\sigma_Y\sqrt{1-\rho^2}}\sqrt{2\pi}}e^{-\frac{1}{2} \left(\frac{y - \left(\color{red}{\mu_Y + \frac{\sigma_Y}{\sigma_X}\rho\left(x-\mu_x\right)}\right)} {\color{blue}{\sigma_Y\sqrt{1-\rho^2}}}\right)^2}$ where the first term is a marginal normal PDF for $X$ and the second is a conditional normal PDF for $Y \mid X = x$ with new parameters $\color{red}{\mu = \mu_Y + \frac{\sigma_Y}{\sigma_X}\rho\left(x-\mu_X\right)}$ & $\color{blue}{\sigma = \sigma_Y\sqrt{1-\rho^2}}$
+
+## Drawing from a Bivariate Normal
+
+```{r}
+#| message: false
+library(dplyr)
+mu_X <- 0; mu_Y <- 0; sigma_X <- 1; sigma_Y <- 1; rho <- 0.75
+R <- 100
+tibble(X = rnorm(R, mean = mu_X, sd = sigma_X),
+       Y = rnorm(R, mean = mu_Y + sigma_Y / sigma_X * rho * (X - mu_X), 
+                 sd = sigma_Y * sqrt(1 - rho^2)))
+```
+
+## Bivariate Normal PDF
+
+```{r}
+#| echo: false
+dbinormal <- function(x, y, mu_X = 1, mu_Y = 3, 
+                      sigma_X = 2, sigma_Y = 4, rho = 1 / 5, 
+                      log = FALSE) {
+  mu <- mu_Y - sigma_Y / sigma_X * rho * (x - mu_X)
+  sigma <- sigma_Y * sqrt(1 - rho^2)
+  
+  log_density <- dnorm(x, mean = mu_X, sd = sigma_X, log = TRUE) + 
+    dnorm(y, mean = mu, sd = sigma, log = TRUE)
+  if (isTRUE(log)) return(log_density)
+  else return(exp(log_density))
+}
+```
+
+```{r}
+#| echo: false
+library(rgl)
+plot3d(dbinormal, xlim = c(-5, 8), ylim = c(-7, 15), 
+       zlab = "f", col = rainbow)
+dir.create("binormal", showWarnings = FALSE)
+writeWebGL(dir = "binormal", template = NULL, width = 1800, height = 900)
+htmlwidgets::saveWidget(rglwidget(), file.path("binormal", "index.html"))
+rgl.close()
+```
+
+```{=html}
+<iframe width="1800" height="900" src="binormal/index.html"></iframe>
+```
+## BioNTech / Pfizer Vaccine Again
+
+```{r}
+draws <- tibble(VE = pmin(1, rnorm(10^7, mean = 0.3, sd = 0.15)),
+                theta = (VE - 1) / (VE - 2),
+                Y = rbinom(10^7, size = 94, prob = theta)) |> 
+  filter(Y == 8)
+nrow(draws)
+```
+
+Thus, the estimate of $\Pr\left(y\right)$ is $\frac{`r nrow(draws)`}{10^7}$, which is deterministically
+
+```{r}
+joint <- function(VE) 
+  dnorm(VE, 0.3, 0.15) * dbinom(8, 94, prob = (VE - 1) / (VE - 2))
+integrate(joint, lower = -Inf, upper = 1)
+```
+
+-   Most of the original $10$ million draws were wasted
+
+-   This was with just $1$ discrete outcome observation
+
+-   Could we draw from $\text{VE}\left(\theta\right) \mid y, n, \dots$ directly?
+
+## Principles to Choose Priors With
+
+1.  Do not use improper priors (those that do not integrate to $1$)
+2.  Subjective, including "weakly informative" priors
+3.  Entropy Maximization
+4.  Invariance to reparameterization (particularly scaling)
+5.  "Objective" (actually also subjective, but different from 2)
+
+-   Choose a prior family that integrates to $1$ over $\Theta$. Then, choose hyperparameters that are consistent w/ your beliefs.
+-   The important part of a prior is what values it discounts. Draw from the prior predictive distribution to check.
+
+## *Ex Ante* P{D,M}F of *Ex Post* Data {.smaller}
+
+A likelihood function is the same expression as a P{D,M}F with 3 distinctions:
+
+1.  For the PDF or PMF, $f\left(\left.x\right|\boldsymbol{\theta}\right)$, we think of $X$ as a random variable and $\boldsymbol{\theta}$ as given, whereas we conceive of the likelihood function, $\mathcal{L}\left(\boldsymbol{\theta};x\right)$, to be a function of $\boldsymbol{\theta}$ (in the mathematical sense) evaluated only at the *observed* data, $x$
+    -   As a consequence, $\int\limits _{-\infty}^{\infty}f\left(\left.x\right|\boldsymbol{\theta}\right)dx=1$ or $\sum\limits _{x \in\Omega}f\left(\left.x\right|\boldsymbol{\theta}\right)=1$ while $\int_{-\infty}^{\infty}\int_{-\infty}^{\infty}\cdots\int_{-\infty}^{\infty} \mathcal{L}\left(\boldsymbol{\theta};x\right)d\theta_{1}d\theta_{2}\ldots d\theta_{K}$ may not exist and is rarely 1
+2.  We often think of "the likelihood function" for $N$ conditionally independent observations, so $\mathcal{L}\left(\boldsymbol{\theta};\mathbf{x}\right)=\prod _{n=1}^{N}\mathcal{L}\left(\boldsymbol{\theta};x_n\right)$
+3.  By "the likelihood function", we often really mean the natural logarithm thereof, a.k.a. the log-likelihood function $\ell\left(\boldsymbol{\theta};\mathbf{x}\right) = \ln\mathcal{L}\left(\boldsymbol{\theta},\mathbf{x}\right)=\sum_{n=1}^{N} \ln\mathcal{L}\left(\boldsymbol{\theta};x_n\right)$
+
+-   Bayesians (can) use the same log-likelihood functions as Frequentists
+
+## Normal Illustration
+
+$$
+\frac{1}{\sigma \sqrt{2 \pi}} e^{-\frac{1}{2} \left(\frac{x - \mu}{\sigma}\right)^2}
+$$
+
+-   For a given $\mu$ and $\sigma > 0$, the above PDF (of $x$) integrates to $1$ over $\Omega = \mathbb{R}$
+
+```{r}
+integrate(dnorm, lower = -Inf, upper = Inf, mean = 1, sd = 2)
+```
+
+-   For a given $x$ and $\mu$, the integral over $\Theta =\mathbb{R}_+$ of the above likelihood function (of $\sigma$) diverges
+
+```{r}
+integrate(dnorm, lower = 0, upper = Inf, x = 5 / 4, mean = 1, 
+          subdivisions = 10^4, stop.on.error = FALSE)
+```
+
+## Discrete-time Markov Processes
+
+-   A Markov process is a sequence of random variables where the future is *conditionally independent* of the past given the present, but nothing is *marginally independent* of anything
+-   Let $X_t$ have conditional PDF $f\left(x_t \mid x_{t - 1}\right)$. The joint PDF is $$f\left(x_1 \bigcap x_2 \bigcap \dots \bigcap x_T \mid x_0\right) = 
+    \prod_{t = 1}^T f\left(x_t \mid x_{t - 1}\right)$$
+-   What is $f\left(\bcancel{x_1} \bigcap \bcancel{x_2} \dots \bigcap x_T \mid x_0\right) = f\left(x_T \mid x_0\right)$? As $T \uparrow \infty$, $f\left(x_T \mid x_0\right) \rightarrow f\left(x_T\right)$, so we can draw from it
+
+## First Order Autoregressive Processes
+
+-   An AR1 model is the simplest (i.e. *linear*) Markov process where $x_t = m \left(1 - p\right) + p x_{t - 1} + \epsilon_t$ and $\epsilon_t$ is distributed normal with expectation zero and standard deviation $s$
+-   As $T \uparrow \infty$, the $T$-th realization of this process is distributed normal with expectation $m$ and standard deviation $\frac{s}{\sqrt{1 - p^2}}$
+
+```{r}
+#| message: false
+library(purrr)
+T <- 1000; R <- 10000
+m <- -1; s <- 2; p <- 0.5
+AR1 <- function(prev, epsilon) m * (1 - p) + p * prev + epsilon
+x_T <- map_dbl(1:R, ~ { # reduce() just keeps the T-th realization
+  reduce(rnorm(T, mean = 0, sd = s), AR1, .init = rpois(n = 1, 10))
+}) # there needs to be an x_0, but it does not matter what it is
+c(mean_diff = mean(x_T) - m, sd_diff = sd(x_T) - s / sqrt(1 - p^2))
+```
+
+## Visualization: AR1 Process $\left(R = 10\right)$
+
+```{r}
+#| echo: false
+library(ggplot2)
+library(dplyr)
+R <- 10
+draws <- tibble(r = as.factor(rep(1:R, each = (T + 1))),
+                t = rep(0:T, times = R)) |>
+  group_by(r) |> 
+  mutate(x = accumulate(rnorm(T, mean = 0, sd = s), AR1, 
+                        .init = rpois(n = 1, 10))) |> 
+  ungroup()
+ggplot(draws) +
+  geom_path(aes(x = t, y = x)) +
+  geom_hline(aes(yintercept = m), color = "red") +
+  facet_wrap(~ r, nrow = 2) +
+  labs(x = "time",
+       y = "x")
+```
+
+## Effective Sample Size {.smaller}
+
+-   What if we only executed the AR1 process once but kept the last $R$ realizations? They are all still $\mathcal{N}\left(m,\frac{s}{\sqrt{1 - p^2}}\right)$ as $T \uparrow \infty$ but not independent, which affects estimation.
+
+-   In an AR1 process, the correlation between $x_t$ and $x_{t \mp n}$ is $p^n$ where $\left|p\right| \leq 1$
+
+-   In general, if a Markov process mixes fast enough for the MCMC CLT to hold, then
+
+    -   The Effective Sample Size is $n_{eff} = \frac{R}{1 + 2\sum_{n=1}^\infty p_n}$, where $p_n$ is the correlation between two draws that are $n$ iterations apart
+    -   The MCMC standard error of the mean of the $R$ draws is $\frac{\sigma}{\sqrt{n_{eff}}}$ where $\sigma$ is the true posterior standard deviation of the parameter in question
+
+-   The MCMC algorithms in the 1990s (some combination of Gibbs, Metropolis-Hastings, and slice sampling) tended to have $p_n \approx 1$ for moderate $n$ and thus $n_{eff} \lll R$
+
+## Metropolis-Hastings MCMC
+
+-   Suppose you want to draw from some distribution whose PDF is $f\left(\left.\boldsymbol{\theta}\right|\dots\right)$ but lack a custom algorithm to do so
+
+-   Initialize $\boldsymbol{\theta}$ to some value in $\Theta$ and then repeat $R$ times:
+
+    1.  Draw a proposal for $\boldsymbol{\theta}$, say $\boldsymbol{\theta}^\prime$, from a distribution whose PDF is $q\left(\left.\boldsymbol{\theta}^\prime\right|\dots\right)$
+    2.  Let $\alpha^\ast = \mathrm{min}\{1,\frac{f\left(\left.\boldsymbol{\theta}^\prime\right|\dots\right)}
+          {f\left(\left.\boldsymbol{\theta}\right|\dots\right)}
+          \frac{q\left(\left.\boldsymbol{\theta}\right|\dots\right)}
+          {q\left(\left.\boldsymbol{\theta}^\prime\right|\dots\right)}\}$. N.B.: Constants cancel so not needed!
+    3.  If $\alpha^\ast$ is greater than a standard uniform variate, set $\boldsymbol{\theta} = \boldsymbol{\theta}^\prime$
+    4.  Store $\boldsymbol{\theta}$ as the $r$-th draw
+
+## Efficiency in Estimating $\mathbb{E}X$ & $\mathbb{E}Y$
+
+-   $R$ draws of $\boldsymbol{\theta}$ have PDF $f\left(\left.\boldsymbol{\theta}\right|\dots\right)$ but are NOT independent
+
+-   If $\frac{q\left(\left.\boldsymbol{\theta}\right|\dots\right)}
+             {q\left(\left.\boldsymbol{\theta}^\prime\right|\dots\right)} = 1$, called Metropolis MCMC
+
+```{r, include = FALSE}
+dbinorm <- function(xy, mu_X, sigma_X, mu_Y, sigma_Y, rho, log = FALSE) {
+  if (log) {
+    return(dnorm(xy[1], mean = mu_X, sd = sigma_X, log = TRUE) +
+           dnorm(xy[2], mean = mu_Y + rho * sigma_Y / sigma_X * (xy[1] - mu_X),
+                 sd = sigma_Y * sqrt((1 + rho) * (1 - rho)), log = TRUE))
+  } else {
+    return(dnorm(xy[1], mean = mu_X, sd = sigma_X) *
+           dnorm(xy[2], mean = mu_Y + rho * sigma_Y / sigma_X * (xy[1] - mu_X),
+                 sd = sigma_Y * sqrt((1 + rho) * (1 - rho))))
+  }
+}
+
+Metropolis <- function(R, half_width, 
+                       mu_X, sigma_X, mu_Y, sigma_Y, rho) {
+  draws <- matrix(NA_real_, nrow = R, ncol = 2)
+  x <- -1 # arbitrary starting value
+  y <-  1 # arbitrary starting value
+  for (r in 1:R) {
+    x_ <- runif(n = 1, min = x - half_width, max = x + half_width)
+    y_ <- runif(n = 1, min = y - half_width, max = y + half_width)
+    alpha_star <- exp(dbinorm(c(x_, y_), mu_X, sigma_X, mu_Y, sigma_Y, rho, log = TRUE) -
+                      dbinorm(c(x , y ), mu_X, sigma_X, mu_Y, sigma_Y, rho, log = TRUE))
+    if (alpha_star > runif(1)) { # keep
+      x <- x_; y <- y_
+    } # else x and y stay the same
+    draws[r, ] <- c(x, y)
+  }
+  return(draws)
+}
+```
+
+```{r}
+means <- 
+  replicate(26, 
+            colMeans(Metropolis(1000, 2.75, 
+                                mu_X, sigma_X, mu_Y, sigma_Y, rho)))
+dimnames(means) <- list(c("x", "y"), LETTERS); round(means, digits = 3)
+```
+
+## Autocorrelation of Metropolis MCMC
+
+```{r, eval = TRUE, fig.height=4.25, fig.width=9, small.mar = TRUE}
+xy <- Metropolis(1000, 2.75, mu_X, sigma_X, mu_Y, sigma_Y, rho)
+nrow(unique(xy))
+colnames(xy) <- c("x", "y"); plot(as.ts(xy), main = "", las = 1)
+```
+
+## Gibbs Samplers
+
+-   Metropolis-Hastings where $q\left(\left.\theta_k^\prime\right|\dots\right) =
+    f\left(\left.\theta_k^\prime\right|\boldsymbol{\theta}_{-k}\dots\right)$ and $\boldsymbol{\theta}_{-k}$ consists of all elements of $\boldsymbol{\theta}$ except the $k$-th
+-   $\alpha^\ast =
+    \mathrm{min}\{1,\frac{f\left(\left.\boldsymbol{\theta}^\prime\right|\dots\right)}
+      {f\left(\left.\boldsymbol{\theta}\right|\dots\right)}
+      \frac{f\left(\left.\theta_k\right|\boldsymbol{\theta}_{-k}\dots\right)}
+      {f\left(\left.\theta_k^\prime\right|\boldsymbol{\theta}_{-k}\dots\right)}\} =\\
+    \mathrm{min}\{1,\frac{f\left(\left.\theta_k^\prime\right|\boldsymbol{\theta}_{-k}\dots\right)
+      f\left(\left.\boldsymbol{\theta}_{-k}\right|\dots\right)}
+      {f\left(\left.\theta_k\right|\boldsymbol{\theta}_{-k}\dots\right)
+       f\left(\left.\boldsymbol{\theta}_{-k}\right|\dots\right)}
+      \frac{f\left(\left.\theta_k\right|\boldsymbol{\theta}_{-k}\dots\right)}
+      {f\left(\left.\theta_k^\prime\right|\boldsymbol{\theta}_{-k}\dots\right)}\} = 1$ so $\theta_k^\prime$ is ALWAYS accepted by construction. But $\theta_k^\prime$ may be very close to $\theta_k$ when the variance of the "full-conditional" distribution of $\theta_k^\prime$ given $\boldsymbol{\theta}_{-k}$ is small
+-   Can loop over $k$ to draw sequentially from each full-conditional distribution\
+-   Presumes that there is an algorithm to draw from the full-conditional distribution for each $k$. Most times have to fall back to something else.
+
+## Gibbs Sampling from the Binormal
+
+```{r}
+Gibbs <- function(R, mu_X, sigma_X, mu_Y, sigma_Y, rho) {
+  draws <- matrix(NA_real_, nrow = R, ncol = 2)
+  x <- rpois(n = 1, 1) # arbitrary starting value
+  beta   <- rho * sigma_Y / sigma_X
+  lambda <- rho * sigma_X / sigma_Y
+  sqrt1mrho2 <- sqrt( (1 + rho) * (1 - rho) )
+  sigma_XY <- sigma_X * sqrt1mrho2 # these are both smaller than the 
+  sigma_YX <- sigma_Y * sqrt1mrho2 # marginal standard deviations!!!
+  for (r in 1:R) { # draw from each CONDITIONAL distribution
+    y <- rnorm(n = 1, mean = mu_Y + beta *   (x - mu_X), sd = sigma_YX)
+    x <- rnorm(n = 1, mean = mu_X + lambda * (y - mu_Y), sd = sigma_XY)
+    draws[r, ] <- c(x, y)
+  }
+  return(draws)
+}
+```
+
+## Autocorrelation of Gibbs Sampling: $n_{eff} \approx 300$
+
+```{r, fig.width=9, fig.height=4.5, small.mar = TRUE}
+xy <- Gibbs(1000, mu_X, sigma_X, mu_Y, sigma_Y, rho)
+colnames(xy) <- c("x", "y")
+plot(as.ts(xy), main = "", las = 1)
+```
+
+## What the BUGS Software Family Does {.smaller}
+
+```{r, message = FALSE}
+library(Runuran) # defines ur() which draws from the approximate ICDF via pinv.new()
+BUGSish <- function(log_kernel, # function of theta outputting posterior log-kernel
+                    theta,      # starting values for all the parameters
+                    ...,        # additional arguments passed to log_kernel()
+                    LB = rep(-Inf, J), UB = rep(Inf, J), # optional bounds on theta
+                    R = 1000) { # number of posterior draws to obtain
+  J <- length(theta); draws <- matrix(NA_real_, nrow = R, ncol = J)
+  for(r in 1:R) { # these loops are slow, as is approximating the ICDF of theta[-k]
+    for (j in 1:J) {
+      full_conditional <- function(theta_j) 
+        return(log_kernel(c(head(theta, j - 1), theta_j, tail(theta, J - j)), ...))
+      theta[j] <- ur(pinv.new(full_conditional, lb = LB[j], ub = UB[j], islog = TRUE,
+                              uresolution = 1e-8, smooth = TRUE, center = theta[j]))
+    }
+    draws[r, ] <- theta
+  }
+  return(draws)
+}
+```
+
+## Gibbs Sampling a la BUGS: $n_{eff} \approx 200$
+
+```{r, BUGS, cache = TRUE, fig.width=9, fig.height=4.5, small.mar = TRUE}
+xy <- BUGSish(log_kernel = dbinorm, theta = c(x = -1, y = 1), 
+              mu_X, sigma_X, mu_Y, sigma_Y, rho, log = TRUE)
+colnames(xy) <- c("x", "y")
+plot(as.ts(xy), main = "", las = 1)
+```
+
+## Data Augmentation in Probit Models {.smaller}
+
+```{=tex}
+\begin{eqnarray*}
+\forall n: y_n &\equiv& z_n > 0 \\
+\forall n: z_n &\equiv& \eta_n + \epsilon_n \\
+\forall n: \epsilon_n &\thicksim& \mathcal{N}\left(0,1\right) \\
+\forall n: \eta_n &\equiv& \mathbf{x}_n^\top \boldsymbol{\beta}\\
+\boldsymbol{\beta} &\thicksim& \mathcal{N}_K\left(\boldsymbol{\mu}_0, \boldsymbol{\Lambda}_0^{-1}\right)
+\end{eqnarray*}
+```
+. . .
+
+Conditional on the observed $\mathbf{y}$, initialize $\boldsymbol{\beta}$ and repeat $R$ times:
+
+1.  $\forall n$ form $\eta_n \equiv \mathbf{x}_n^\top \boldsymbol{\beta}$
+
+2.  $\forall n$ draw $z_n$ from a truncated normal distribution with location $\eta_n$, scale $1$, and $0$ as the truncation point, where $z_n > 0$ if and only if $y_n = 1$
+
+3.  Draw $\boldsymbol{\beta}$ from a multivariate normal with precision matrix $\boldsymbol{\Lambda} = \mathbf{X}^\top \mathbf{X} + \boldsymbol{\Lambda}_0$ and expectation $\boldsymbol{\Lambda}^{-1}\left(\boldsymbol{\Lambda}_0\boldsymbol{\mu}_0 + \mathbf{X}^\top \mathbf{z}\right)$
+
+4.  Store $\boldsymbol{\beta}$ but not $\mathbf{z}$
+
+. . .
+
+Above Gibbs sampler yields draws from $\boldsymbol{\beta} \bigcap \bcancel{\mathbf{z}} \mid \boldsymbol{\mu}_0, \boldsymbol{\Lambda_0}, \mathbf{y}$
