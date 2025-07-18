@@ -1,0 +1,195 @@
+---
+title: "Hamiltonian Markov Chain Monte Carlo"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+preload-iframes: true  
+---
+
+## Comparing Stan to First Gen MCMCs
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+-   Stan only requires user to specify kernel of Bayes Rule
+-   Unlike Gibbs sampling, proposals are joint
+-   Like Gibbs sampling, proposals always accepted
+-   Like Gibbs sampling, tuning of proposals is not required
+-   Unlike Gibbs sampling, the effective sample size is typically 25% to 125% of the nominal number of draws from the posterior distribution because $\rho_1$ can be negative in $n_{eff} = \frac{S}{1 + 2\sum_{n=1}^\infty \rho_n}$
+-   Unlike Gibbs sampling, Stan produces warning messages
+
+## Differentiating the Log-Kernel
+
+-   Stan always works with log-PDFs or really log-kernels (in $\boldsymbol{\theta}$) $$\ln f\left(\boldsymbol{\theta} \mid \mathbf{y}, \dots\right) =
+    \ln f\left(\boldsymbol{\theta} \mid \dots\right) +
+    \ln \mathcal{L}\left(\boldsymbol{\theta}; \mathbf{y}\right) -
+    \ln f\left(\mathbf{y} \mid \dots\right)$$
+-   The gradient of the log-PDF is the gradient of the log-kernel $$\boldsymbol{\nabla} \ln f\left(\boldsymbol{\theta} \mid \mathbf{y}, \dots\right) =
+    \boldsymbol{\nabla} \ln f\left(\boldsymbol{\theta} \mid \dots\right) +
+    \boldsymbol{\nabla} \ln \mathcal{L}\left(\boldsymbol{\theta}; \mathbf{y}\right) + \mathbf{0}$$
+-   This gradient is basically exact, and the chain rule can be executed by a C++ compiler without the user having to compute any derivatives
+
+## Hamiltonian MCMC Algorithms, Part 1
+
+-   Stan's MCMC algorithm is more complicated than an AR1
+
+-   We take the natural log of Bayes' Rule, $\ln f\left(\boldsymbol{\theta} \mid \mathbf{y}, \dots\right) =$ $\ln f\left(\boldsymbol{\theta} \mid \dots\right) + \ln f\left(\mathbf{y} \mid \boldsymbol{\theta}\right) - \ln f\left(\mathbf{y} \mid \dots\right)$, where $\boldsymbol{\theta}$ is a vector of $K$ parameters and then introduce $\boldsymbol{\phi}$, which is a vector of $K$ momenta parameters w/ prior $\phi_k \thicksim \mathcal{N}\left(0,s_k\right)$
+
+-   Define "energy" as the sum of potential and kinetic energy
+
+```{=tex}
+\begin{eqnarray*}
+H\left(\boldsymbol{\theta}, \boldsymbol{\phi}\right) &=& -\left(\ln f\left(\boldsymbol{\theta} \mid \dots\right) + \ln f\left(\mathbf{y} \mid \boldsymbol{\theta}\right) - \ln f\left(\mathbf{y} \mid \dots\right)\right) \\ 
+&+& \sum_{k = 1}^K \left(\ln s_k + \frac{1}{2} \ln 2\pi + \frac{\phi_k^2}{2s_k^2}\right)
+\end{eqnarray*}
+```
+## Hamiltonian MCMC Algorithms, Part 2
+
+-   Since $\boldsymbol{\phi}_k$ does not enter the log-likelihood, its posterior distribution is the same as its normal prior distribution
+
+-   We choose starting $\left(r = 0\right)$ values for $\boldsymbol{\theta}$ somehow
+
+-   At iteration $r > 0$ of $R$, we draw each $\phi_k$ from its normal distribution and recalculate $H^{\left[r\right]} = H\left(\boldsymbol{\theta}^{\left[r - 1\right]}, \boldsymbol{\phi}^{\left[r\right]}\right)$
+
+-   Hamiltonian dynamics is a nonlinear Markov process that evolves the parameters over "time", such that potential and kinetic energy change but total energy is conserved at $H^{\left[r\right]}$
+
+-   Conservation of $H^{\left[r\right]}$ is crucial because it allows us to drop constants like $\ln f\left(\mathbf{y} \mid \dots\right)$, which we do not know anyway
+
+## Hamiltonian MCMC Algorithms, Part 3
+
+-   We need to solve an initial value problem that is governed by Hamilton's system of ODEs: $\frac{d\boldsymbol{\theta}}{dt} = \frac{\partial H}{\partial \boldsymbol{\phi}}$ and $\frac{d\boldsymbol{\phi}}{dt} = -\frac{\partial H}{\partial \boldsymbol{\theta}}$
+
+-   $\frac{\partial H}{\partial \boldsymbol{\phi}} = \frac{\boldsymbol{\phi}}{\mathbf{s}^2}$, and although $\frac{\partial H}{\partial \boldsymbol{\theta}}$ would be tedious for humans, it is easy for computers and doesn't involve $\frac{\partial \ln f\left(\mathbf{y} \mid \dots\right)}{\partial \boldsymbol{\theta}} = \mathbf{0}$
+
+-   If both the posterior and momentum were standard normal, $\theta\left(t\right) = r \cos \left(a + t\right)$ and $\phi\left(t\right) = -r \sin\left(a + t\right)$ whose constants, $r$ and $a$, could be determined at $t = 0$
+
+-   Hamiltonian dynamics is also reversable and volume-conserving, so this process produces draws of $\boldsymbol{\theta}$ and $\boldsymbol{\phi}$ whose PDF is proportional at all times to $e^{-H\left(\boldsymbol{\theta}, \boldsymbol{\phi}\right)}$
+
+## Hamiltonian MCMC Algorithms, Part 4
+
+-   The preceding Hamiltonian theory from physics presumes that time is continuous, but for MCMC, "time" is discretized
+
+-   The "leapfrog" method for solving initial-value problems works well but introduces a small amount of error each step
+
+    -   If the stepsize is sufficiently small, the error at one step tends to cancel with the error at another step
+
+    -   If the stepsize is too big, the error tends to accumulate, which can lead to a divergent transition
+
+    -   The global stepsize is tuned and for each $\phi_k$, its prior / posterior standard deviation $s_k$ is tuned to get a good $n_{eff}$ without divergent transitions
+
+## Hamiltonian MCMC Algorithms, Part 5
+
+-   In Stan, the total integration time at iteration $r$ is a random variable; i.e. the integration is stopped when the trajectories in positive time & negative time start to get closer together
+
+-   Once that happens, Stan chooses a realization of $\boldsymbol{\theta}^{\left[t\right]}$ and $\boldsymbol{\phi}^{\left[t\right]}$ with probability proportional to $f\left(\boldsymbol{\theta}^{\left[t\right]} \mid \mathbf{y}, \dots\right)$ as its proposal for iteration $r$ and then accepts that proposal or keeps the previous one by applying the Metropolis criterion
+
+-   In short, users need to specify $\ln f\left(\boldsymbol{\theta}, \dots\right) + \ln f\left(\mathbf{y} \mid \boldsymbol{\theta}\right)$ and the algorithm in Stan can (mostly) handle the rest
+
+## AR1 Processes vs. Hamiltonian MCMC
+
+$H\left(\boldsymbol{\theta}, \boldsymbol{\phi}\right) = C -\ln f\left(\boldsymbol{\theta} \mid \mathbf{y}\right) + \sum_{k = 1}^K \left(\ln s_k + \frac{1}{2}\ln 2\pi + \frac{\phi_k}{2s_k^2}\right)$
+
+| Concept                        | Autoregressive                                            | Hamiltonian MCMC                                                                                                                                                                                                                                                   |
+|------------------|------------------|-------------------------------------|
+| #dimensions                    | $1$ (at least here)                                       | $K$ (2 or 3 in real physics)                                                                                                                                                                                                                                       |
+| Time                           | Discrete                                                  | Continuous (discretized)                                                                                                                                                                                                                                           |
+| Randomness                     | $\epsilon_t \thicksim \mathcal{N}\left(0,s\right)$        | $\phi_k \thicksim \mathcal{N}\left(0, s_k\right)$ at $t = 0$                                                                                                                                                                                                       |
+| Updating rule in time          | $x_t = m \left(1 - p\right)\\ + p x_{t - 1} + \epsilon_t$ | $\boldsymbol{\theta}\left(t\right), \boldsymbol{\phi}\left(t\right)$ such that $\dot{\boldsymbol{\theta}}\left(t\right) = \frac{\partial H}{\partial \boldsymbol{\phi}}, \dot{\boldsymbol{\phi}}\left(t\right) = -\frac{\partial H}{\partial \boldsymbol{\theta}}$ |
+| Correlation: $t$ and $t \mp n$ | $p^n$ so sign depends on $p$                              | Usually negative for $n = 1$ and near zero otherwise                                                                                                                                                                                                               |
+
+## Video of [Original](http://www.stat.columbia.edu/~gelman/research/published/nuts.pdf) Stan [Algorithm](https://github.com/andrewGhazi/funstuff/blob/master/R/nuts.R)
+
+```{=html5}
+<iframe width="1120" height="630" src="https://www.youtube.com/embed/qxCQoZC0CVY" title="NUTS Animation" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+```
+## No U-Turn Sampling (NUTS)
+
+-   The location of $\boldsymbol{\theta}$ moving according to Hamiltonian physics at any instant would be a valid draw from the posterior distribution
+-   But (in the absence of friction) $\boldsymbol{\theta}$ moves indefinitely so when do you stop?
+-   [Hoffman and Gelman (2014)](http://www.stat.columbia.edu/~gelman/research/published/nuts.pdf) proposed stopping when there is a "U-turn" in the sense the footprints turn around and start to head in the direction they just came from. Hence, the name No U-Turn Sampling.
+-   After the U-Turn, one footprint is selected with probability proportional to the posterior kernel to be the realization of $\boldsymbol{\theta}$ on iteration $s$ and the process repeates itself
+-   NUTS discretizes a continuous-time Hamiltonian process in order to solve a system of Ordinary Differential Equations (ODEs), which requires a stepsize that is also tuned during the warmup phase
+-   [Video](https://www.youtube.com/watch?time_continue=1&v=qxCQoZC0CVY&feature=emb_logo) and R [code](https://github.com/andrewGhazi/funstuff/blob/master/R/nuts.R)
+
+## Using Stan via R or Python
+
+1.  Write the program in a (text) .stan file w/ R-like syntax that ultimately defines a posterior log-kernel. Stan's parser, `stanc`, does two things:
+    -   checks that program is syntactically valid
+    -   writes a conceptually equivalent C++ source file to disk
+2.  C++ compiler creates a binary file from the C++ source
+3.  Execute the binary (can be concurrent with 2)
+4.  Analyze the resulting samples from the posterior
+    -   Posterior predictive checks
+    -   Model comparison
+    -   Decision
+
+## A Better Model for Vax Effectiveness
+
+```{r, echo = FALSE, comment = ""}
+writeLines(readLines("vaccine.stan"))
+```
+
+## Drawing from a Posterior Distribution
+
+```{r}
+#| label: vaccine
+#| cache: true
+#| output: false
+library(cmdstanr)
+mod <- cmdstan_model("vaccine.stan")
+post <- mod$sample(data = list(m = 0.3, s = 0.15, n = 94, y = 8), 
+                   output_dir = getwd())
+```
+
+```{r}
+post$summary() |> print(width = 90)
+```
+
+. . .
+
+`cmdstanpy` works essentially the same except you pass a `dict` of data to Stan and the methods are called like `mod.sample` instead of `mod$sample`.
+
+## Warnings You Should Be Aware Of (1)
+
+Unlike 1990s MCMC algorithms, Stan warns you when things do not go well, which you must heed
+
+1.  Divergent Transitions: This means the tuned stepsize ended up too big relative to the curvature of the log-kernel
+    -   Increase `adapt_delta` above its default value ($0.8$)
+
+    -   Use more informative priors
+2.  Hitting the maximum treedepth: This means the tuned stepsize ended up so small that it could not get all the way around the parameter space in one iteration
+    -   Increase `max_treedepth` beyond its default value of $10$
+
+## Warnings You Should Be Aware Of (2)
+
+3.  Bulk / Tail Effective Sample Size too low: This means the tuned stepsize ended up so small that adjacent draws have too much dependence
+
+    -   Increase the number of iterations or chains
+
+4.  $\widehat{R} > 1.01$: This means the chains have not converged
+
+    -   You could try running the chains longer, but there is probably a deeper problem
+
+5.  Low Bayesian Fraction of Information: This means that you posterior distribution has really extreme tails
+
+    -   You could try running the chains longer
+
+## Checking the Diagnostics
+
+```{r}
+post$cmdstan_diagnose()
+```
+
