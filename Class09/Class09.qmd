@@ -1,0 +1,208 @@
+---
+title: "Linear Models"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+preload-iframes: true  
+---
+
+## Homework 1
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+-   Grades posted on Canvas
+
+-   Biggest confusion was whether card counting in blackjack is Bayesian, which the video implies is not because the probability of being dealt a blackjack is an objective property of the decks
+
+-   Realistically, you could count with error, in which case what you think the count is in your head, rather than purely a property of the decks
+
+## Bowling with Continuous Ability
+
+-   Now — presuming $x \leq n$ — let$$\Pr\left(x \mid n, \theta\right) = 
+    \begin{cases}
+    \frac{\log_{n + 1 + 1 / \theta}\left(1 + \frac{1}{n + 1 / \theta - x}\right)}
+    {1 + \log_{n + 1 + 1 / \theta}\left(\theta\right)} \text{ if } \theta > 0 \\
+    \frac{\log_{n + 1 - 1 / \theta}\left(1 + \frac{1}{x - 1 / \theta}\right)}
+    {\log_{n + 1 - 1 / \theta}\left(1 + \theta\left(n + 1\right)\right)} \text{ if } \theta < 0 \\
+    \frac{1}{n + 1} \text{ if } \theta = 0
+    \end{cases}$$
+-   If $\theta= 1$, this specializes to the PMF from before
+-   If $\theta < 0$, the probabilities are reversed compared to $\left|\theta\right|$
+
+## Thinking about a Prior on $\theta$
+
+```{r}
+#| echo: false
+library(ggplot2)
+source("bowling.R")
+E <- function(theta) {
+  sapply(theta, FUN = function(t) sum(Omega * Pr(Omega, n = 10, t)))
+}
+at <- 10^(1:8)
+ggplot() + 
+  scale_x_continuous(limits = c(-10^8, 10^8),
+                     breaks = c(-at, 0, at),
+                     trans = ggallin::pseudolog10_trans) + 
+  ylim(0, 10) + 
+  geom_function(fun = E) +
+  labs(x = "theta",
+       y = "Conditional Expectation of X_1 | theta")
+```
+
+## Marginal(ized) Probability in Bowling
+
+-   Suppose we utilize a normal prior for a bowler's $\theta$ with mean $m$ and standard deviation $s > 0$
+
+-   The joint PDF of $\theta$ and $X$ is $f\left(\theta \bigcap x \mid n\right) = \frac{1}{s\sqrt{2\pi}} e^{-\frac{1}{2} \left(\frac{\theta - m}{s}\right)^2} \times \Pr\left(x \mid n, \theta\right)$
+
+-   The marginal(ized) PMF of $X$ is $$\Pr\left(x \mid n\right) = f\left(\bcancel{\theta} \bigcap x \mid n\right) =
+    \int_{-\infty}^\infty f\left(\theta \bigcap x \mid n\right) d\theta$$ but we cannot obtain the antiderivative to evaluate the area under the curve (so says the [Risch algorithm](https://en.wikipedia.org/wiki/Risch_algorithm))
+
+## A Better Model for Bowling
+
+```{r, echo = FALSE, comment = ""}
+writeLines(readLines("bowling.stan"))
+```
+
+## Drawing from a Posterior Distribution
+
+```{r}
+#| label: bowling
+#| cache: true
+#| output: false
+library(cmdstanr)
+mod <- cmdstan_model("bowling.stan")
+post <- mod$sample(data = list(N = 10, theta_m = 2 / 3, theta_s = 1,
+                               pins = matrix(c(9, 1, 8, 1, 7, 3, 10, 0,
+                                               6, 4, 7, 2, 9, 1, 10, 0, 
+                                               9, 1, 7, 1), byrow = TRUE,
+                                             nrow = 10, ncol = 2)),
+                   output_dir = getwd())
+```
+
+```{r}
+post$summary()
+post$draws()
+```
+
+## Checking Diagnostics
+
+```{r}
+post$cmdstan_diagnose()
+```
+
+## Economic Data from HW1
+
+```{r}
+source("macroeconomic_data.R", echo = TRUE) # from Week07/
+tail(data)
+```
+
+## Notation for Generative Models
+
+::: columns
+::: {.column width="55%"}
+Math Notation $$
+\forall n: y_n \equiv \mu + \beta \left(x_n - \overline{x}\right) + \epsilon_n \\
+\forall n: \epsilon_n \thicksim \mathcal{N}\left(0,\sigma\right) \\
+\sigma \thicksim \mathcal{E}\left(r\right) \\
+\mu \thicksim \mathcal{N}\left(m_{\mu}, s_{\mu}\right) \\
+\beta \thicksim \mathcal{N}\left(m_{\beta}, s_{\beta}\right)
+$$But draw from bottom to top
+:::
+
+::: {.column width="45%"}
+R Code for Okun's Law
+
+```{r}
+N <- nrow(data)
+R <- 10^4
+x_bar <- mean(data$x)
+draws <- 
+  tibble(
+    beta = rnorm(R, -2, 1),
+    mu = rnorm(R, 3, .5),
+    sigma = rexp(R, .5)
+  ) |> 
+  rowwise() |> 
+  summarize(
+    epsilon = 
+      rnorm(N, 0, sigma),
+    y = mu + beta *
+        (data$x - x_bar) + 
+        epsilon
+  ) |> 
+  ungroup()
+```
+:::
+:::
+
+## Check the Prior Predictions Logically
+
+```{r}
+#| message: false
+library(ggplot2)
+ggplot(draws) + geom_density(aes(y)) + xlim(-15, 15)
+```
+
+## Example Stan Program
+
+```{stan output.var="Okun", eval = FALSE}
+data {
+  int<lower = 0> N;
+  vector[N] x;
+  vector[N] y;
+  real mu_m;   real<lower = 0> mu_s;
+  real beta_m; real<lower = 0> beta_s;
+  real<lower = 0> sigma_r;
+}
+transformed data {
+  real x_bar = mean(x);
+  vector[N] x_ = x - x_bar;
+}
+parameters {
+  real mu;
+  real beta;
+  real<lower = 0> sigma;
+}
+model {
+  target += normal_lpdf(y | mu + beta * x_, sigma);
+  target += exponential_lpdf(sigma | sigma_r);
+  target += normal_lpdf(beta | beta_m, beta_s);
+  target += normal_lpdf(mu | mu_m, mu_s);
+}
+generated quantities {
+  real alpha = mu + beta * x_bar;
+} // intercept relative to raw predictors
+```
+
+## The `stan_glm` Function
+
+```{r}
+#| message: false
+library(rstanarm)
+options(mc.cores = parallel::detectCores())
+post <- stan_glm(GDO ~ x, data = data, seed = 12345,
+                 prior_intercept = normal(3, 0.5), # on mu
+                 prior = normal(-2, 1),            # on beta
+                 prior_aux = exponential(0.5))     # on sigma
+```
+
+```{r}
+plot(post, plotfun = "areas_ridges")
+```
+
