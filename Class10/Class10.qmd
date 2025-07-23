@@ -1,0 +1,161 @@
+---
+title: "More Linear Models"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+preload-iframes: true  
+---
+
+## Economic Data from HW1
+
+```{r}
+source("macroeconomic_data.R", echo = TRUE)
+tail(data)
+```
+
+## The `stan_glm` Function
+
+```{r}
+#| message: false
+library(rstanarm)
+options(mc.cores = parallel::detectCores())
+# bambi is similar https://www.jstatsoft.org/article/view/v103i15
+post <- stan_glm(GDO ~ x, data = data, seed = 12345,
+                 prior_intercept = normal(3, 0.5), # on mu
+                 prior = normal(-2, 1),            # on beta
+                 prior_aux = exponential(0.5))     # on sigma
+```
+
+```{r}
+plot(post, plotfun = "areas_ridges")
+```
+
+## Output of `print`
+
+```{r}
+post # intercept is relative to raw predictors
+```
+
+. . .
+
+These are not "the" point estimates
+
+## Credible Intervals
+
+```{r}
+posterior_interval(post, level = 0.9)
+```
+
+. . .
+
+These are not confidence intervals
+
+## Inference About Direction
+
+```{r}
+draws <- as.data.frame(post)
+summarize(draws, prob = mean(x > -4))
+```
+
+. . .
+
+This is not a $p$-value for the null hypothesis that $\beta = -4$
+
+## Posterior Predictions for Q2 of 2025
+
+```{r}
+library(ggplot2)
+x <- -0.1
+y <- draws$`(Intercept)` + draws$x * x +
+  rnorm(nrow(draws), mean = 0, sd = draws$sigma)
+ggplot() + geom_density(aes(y))
+```
+
+## The `posterior_predict` Function
+
+```{r}
+PPD <- posterior_predict(post, newdata = tibble(x = -0.1))
+print(as_tibble(PPD), n = 9) # has as many columns as rows in newdata
+```
+
+. . .
+
+By default, `posterior_predict` generates predictions for the data (after dropping rows with `NAs` on the active variables) that `post` conditioned on, in which case it should not be too inconsistent with the observed outcome.
+
+## ShinyStan
+
+-   ShinyStan can be launched on an object produced by rstanarm via
+
+```{r}
+#| eval: false
+launch_shinystan(post) # may have to read CSV files created by cmstanpy
+```
+
+-   A webapp will open in your web browser that helps you visualize the posterior distribution and diagnose problems
+
+. . .
+
+-   All of ShinyStan's plots can be recreated with R code, e.g.
+
+```{r}
+#| fig-show: hide
+pp_check(post, plotfun = "intervals") + # a ggplot object
+  labs(x = "Quarter Since 1970", y = "Predictions of GDO")
+```
+
+## Plot from Previous Slide
+
+```{r}
+#| echo: false
+pp_check(post, plotfun = "intervals") + # a ggplot object
+  labs(x = "Quarter Since 1970", y = "Predictions of GDO")
+
+```
+
+## IQ of Three Year-Olds
+
+```{r}
+data(kidiq, package = "rstanarm")
+colnames(kidiq)
+```
+
+. . .
+
+$$
+\forall n: y_n \equiv \mu + \beta_1 \mbox{HS}_n + \beta_2 \mbox{IQ}_n + \beta_3 \mbox{AGE}_n + \epsilon_n \\
+\forall n: \epsilon_n \thicksim \mathcal{N}\left(0,\sigma\right) \\
+\sigma \thicksim \mathcal{E}\left(r\right) \\
+\mu \thicksim \mathcal{N}\left(m_0, s_0\right) \\
+\forall k: \beta_k \thicksim \mathcal{N}\left(m_k, s_k\right)
+$$
+
+. . .
+
+What prior hyperparameters would you choose? How would you draw from the prior predictive distribution?
+
+## Prior Predictive Distribution
+
+```{r}
+prior <- stan_glm(kid_score ~ mom_hs + I(mom_iq / 10) + I(mom_age / 10), 
+                  data = kidiq, prior_PD = TRUE, # don't condition on y
+                  prior_intercept = normal(100, 10),       # on mu
+                  prior = normal(c(5, 10, 0), c(2, 5, 3)), # on betas
+                  prior_aux = exponential(1 / 10))         # on sigma
+PPD <- posterior_predict(prior) # actually matrix of prior predictions
+ggplot() + geom_density(aes(x = c(PPD))) + xlim(0, 200)
+```
+
+## Posterior Distribution
+
+```{r}
+post <- update(prior, prior_PD = FALSE) # now condition on y
+post # intercept is relative to raw predictors
+```
+
+. . .
+
+Do not say that `mom_age` is statistically insignificant and / or eliminate it from the model simply because it may be negative
