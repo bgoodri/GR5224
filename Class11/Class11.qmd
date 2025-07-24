@@ -1,0 +1,298 @@
+---
+title: "Generalized Linear Models (GLMs)"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## Nonlinear Functions of Predictors
+
+$$
+\forall n: y_n \equiv \mu + \beta_1 \mbox{HS}_n + \gamma_n \mbox{IQ}_n + \lambda_n \mbox{AGE}_n + \epsilon_n \\ 
+\forall n: \gamma_n \equiv \beta_2 + \beta_3 \mbox{HS}_n \\
+\forall n: \lambda_n \equiv \beta_4 + \beta_5 \mbox{AGE}_n \\
+\forall n: \epsilon_n \thicksim \mathcal{N}\left(0,\sigma\right) \\
+\sigma \thicksim \mathcal{E}\left(r\right) \\
+\mu \thicksim \mathcal{N}\left(m_0, s_0\right) \\
+\forall k: \beta_k \thicksim \mathcal{N}\left(m_k, s_k\right)
+$$
+
+. . .
+
+After substituting / distributing, we get a "linear" model where$\mathbb{E}y_n \equiv \mu + \beta_1 \mbox{HS}_n + \beta_2 \mbox{IQ}_n + \beta_3 \mbox{HS}_n\mbox{IQ}_n + \beta_4 \mbox{AGE}_n + \beta_5 \mbox{AGE}_n^2$
+
+## Posterior Distribution of `stan_lm`
+
+```{r}
+#| output: false
+library(rstanarm)
+data("kidiq")
+post <- stan_lm(kid_score ~ mom_hs * I(mom_iq / 10) + 
+                   poly(mom_age / 10, degree = 2, raw = TRUE), 
+                 data = kidiq, adapt_delta = 0.99, seed = 12345,
+                 prior_intercept = normal(100, 10),
+                 prior = R2(0.25, what = "median"))
+                 # maximum entropy for beta given expected log R^2
+```
+
+```{r}
+post
+```
+
+## Interpretation of Age Effect
+
+```{r}
+library(dplyr)
+draws <- as_tibble(post)
+colnames(draws)
+```
+
+. . .
+
+```{r}
+#| fig-show: hide
+library(ggplot2)
+age_effect <- select(kidiq, mom_age) |> 
+  rowwise() |> 
+  summarize(mom_age, 
+            z = pull(draws, 4) * mom_age + pull(draws, 5) * mom_age^2) |> 
+  ungroup() |> 
+  mutate(z = z - mean(z))
+ggplot(age_effect, aes(x = as.factor(mom_age), y = z)) +
+  geom_boxplot() # # plot on next slide
+```
+
+## Plot from Previous Slide
+
+```{r}
+#| echo: false
+ggplot(age_effect, aes(x = as.factor(mom_age), y = z)) +
+  geom_boxplot() + 
+  labs(x = "Mom's age",
+       y = "Expected Kid's IQ, relative to average")
+```
+
+## Polling Data from November 6, 2012 {.smaller}
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+
+```{r}
+#| message: false
+poll <- as_tibble(readRDS("GooglePoll.rds")) # in Week09/
+select(poll, -Time_UTC)
+```
+
+Outcome is `WantToWin`, which is either Barack Obama or Mitt Romney (or `NA`)
+
+```{r}
+X <- model.matrix(WantToWin ~ Gender + Age + Urban_Density + Income + Region, data = poll)
+X <- X[ , -1] # drop (Intercept) that is included by default
+X <- sweep(X, MARGIN = 2, STATS = colMeans(X), FUN = `-`) # center each column
+colnames(X) # formula expands to 16 dummy variables (now centered)
+```
+
+## Binary Generative Model
+
+::: columns
+::: {.column width="52%"}
+Math Notation $\begin{eqnarray*} \forall n: y_n & \equiv & y_n^\ast > 0 \\ \forall n: y_n^\ast & \equiv & \eta_n + \epsilon_n \\ \forall n: \epsilon_n & \thicksim & \mathcal{N}\left(0,1\right) \mbox{ or } \mathcal{L}\left(0,1\right) \\ \forall n: \eta_n & \equiv & \alpha + \sum_{k = 1}^K \beta_k x_{nk} \\ \alpha & \equiv & \gamma - \sum_{k = 1}^K \beta_k \overline{x}_k \\ \gamma & \thicksim & \mathcal{N}\left(m_0, s_0\right) \\ \forall k: \beta_k & \thicksim & \mathcal{N}\left(m_k, s_k\right) \end{eqnarray*}$
+:::
+
+::: {.column width="48%"}
+::: fragment
+R Code for Priors
+
+```{r}
+# inverse CDF transformation
+m_0 <- qlogis(0.55) 
+s_0 <- 0.05
+
+m <- 
+  c(-0.25, # male
+    seq(from = 0, to = -0.25, 
+        length.out = 5), # age
+    0,   # suburban
+    0.3, # urban
+    seq(from = 0, to = -0.25,
+        length.out = 5), # $
+    0.25,  # Northeast 
+    -.25,  # South
+    0.25)  # West
+names(m) <- colnames(X)
+s <- 0.15 # used for all
+```
+:::
+:::
+:::
+
+## Prior Predictive Distribution
+
+```{r}
+#| message: false
+R <- 1000
+priors <- purrr::map_dfc(m, ~ {
+  rnorm(R, mean = .x, sd = s)
+}) %>% 
+  mutate(gamma = rnorm(R, mean = m_0, sd = s_0)) 
+predictions <- cross_join(x = priors, y = as_tibble(X)) |> 
+  transmute(eta = gamma + # cross_join() added a .x or .y suffix
+              rowSums(pick(ends_with(".x")) * pick(ends_with(".y"))),
+            epsilon = rlogis(n()),
+            y_star = eta + epsilon,
+            y = y_star > 0) %>% 
+  ungroup
+print(predictions, n = 6)
+```
+
+## Plotting $\mathbf{y}^\ast$
+
+```{r}
+ggplot(predictions) + geom_density(aes(y_star)) + xlim(-6, 6)
+```
+
+## Deriving the Bernoulli Log-Likelihood
+
+::: incremental
+-   $\ell\left(\gamma, \boldsymbol{\beta}; \mathbf{y}\right) = \ln \prod_{n = 1}^N \Pr\left(y_n = 1\right)^{y_n} \left(1 - \Pr\left(y_n = 1\right)\right)^{1 - y_n} = \\ \sum_{n = 1}^N \left[y_n \ln \Pr\left(y_n = 1\right) + \left(1 - y_n\right) \ln\left(1 - \Pr\left(y_n = 1\right)\right)\right]$
+
+-   $\mu_n = \Pr\left(y_n = 1\right) = \Pr\left(\eta_n + \epsilon_n > 0\right) = \Pr\left(\epsilon_n > -\eta_n\right) = \\ \Pr\left(\epsilon_n \leq \eta_n\right) = F\left(\eta_n\right) \mbox{ either std. normal or logistic CDF}$
+
+-   Standard logistic CDF is elementary: $F\left(\eta_n\right) = \frac{1}{1 + e^{-\eta_n}}$
+
+-   So, $\ell\left(\gamma, \boldsymbol{\beta}; \mathbf{y}\right) = \sum_{n = 1}^N \left[y_n \ln \frac{1}{1 + e^{-\eta_n}} + \left(1 - y_n\right) \ln \frac{e^{-\eta_n}}{1 + e^{-\eta_n}}\right]$, where $\eta_n \equiv \gamma + \sum_{k = 1}^K \beta_k \left(x_{nk} - \overline{x}_k\right) = \ln \frac{\Pr\left(y_n = 1\right)}{1 - \Pr\left(y_n = 1\right)}$
+:::
+
+## Plotting $\mu = \Pr\left(y = 1 \mid \eta\right)= \frac{1}{1 + e^{-\eta}}$
+
+```{r}
+ggplot(predictions) + geom_density(aes(plogis(eta))) + labs(x = "Obama Probability")
+```
+
+## Logit Posterior Distribution
+
+```{r}
+library(rstanarm)
+options(mc.cores = parallel::detectCores())
+```
+
+```{r, Obama}
+#| cache: true
+post <- stan_glm(WantToWin == levels(WantToWin)[1] ~ # Obama is 1
+                   Gender + Age + Urban_Density + Income + Region, 
+                 family = binomial(link = "logit"),  # not gaussian()
+                 data = poll,
+                 prior_intercept = normal(m_0, s_0), # on gamma
+                 prior = normal(m, s)) # on the betas
+```
+
+## Plotting the Posterior Distribution
+
+```{r}
+plot(post, plotfun = "areas") #(Intercept) is alpha, rather than gamma
+```
+
+## Binomial Generative Model
+
+::: columns
+::: {.column width="55%"}
+Math Notation $\begin{eqnarray*} \forall j: y_j & \equiv & \sum_{i \in j} y_i \\ \forall i,j: y_{ij} & \equiv & \eta_{ij} + \epsilon_{ij} > 0 \\ \forall i,j: \epsilon_{ij} & \thicksim & \mathcal{N}\left(0,1\right) \mbox{ or } \mathcal{L}\left(0,1\right) \\ \forall i,j: \eta_{ij} & \equiv & \gamma + \\ & & \sum_{k = 1}^K \beta_k \left(x_{ijk} - \overline{x}_k\right) \\ \gamma & \thicksim & \mathcal{N}\left(m_0, s_0\right) \\ \forall k: \beta_k & \thicksim & \mathcal{N}\left(m_k, s_k\right) \end{eqnarray*}$
+:::
+
+::: {.column width="45%"}
+::: fragment
+R Code to Group the Data
+
+```{r}
+poll_grouped <-
+  na.omit(poll) %>% 
+  rename(y = WantToWin) %>% 
+  group_by(Gender,
+           Age,
+           Urban_Density,
+           Income,
+           Region) %>% 
+  summarize(
+    Obama = 
+      sum(y == levels(y)[1]),
+    Romney = n() - Obama,
+    .groups = "drop") 
+
+c(poll = nrow(na.omit(poll)),
+  poll_grouped = 
+    nrow(poll_grouped))
+```
+:::
+:::
+:::
+
+## Probit Posterior Distribution
+
+-   Coefficients in a probit model are usually scaled by a factor of about $1.6 \approx$ `dnorm(0) / dlogis(0)` relative to the coefficients in a logit model
+
+```{r, probit}
+#| cache: true
+post <- stan_glm(cbind(Obama, Romney) ~ # notation for binomial outcomes
+                   Gender + Age + Urban_Density + Income + Region, 
+                 family = binomial(link = "probit"), # not the default
+                 data = poll_grouped, # not poll
+                 # prior_intercept refers to gamma, rather than alpha
+                 prior_intercept = normal(m_0 * 1.6, s_0 * 1.6),
+                 prior = normal(m * 1.6, s * 1.6)) # on the betas
+```
+
+## Checking the Posterior Distribution
+
+```{r}
+pp_check(post, plotfun = "error_binned") + xlim(0, 1)
+```
+
+## `posterior_*` Functions
+
+::: incremental
+-   `as.matrix` returns an $R \times \left(1 + K\right)$ matrix where the first column contains draws of $\alpha$ (not $\gamma$) and the $k + 1$th column contains draws of $\beta_k$ (`as_tibble` is similar)
+
+-   `posterior_linpred` returns an $R \times N$ matrix where the $n$-th column contains draws from the posterior distribution of the linear predictor, $\eta_n = \alpha + \sum_{k = 1}^K \beta_k x_{nk}$
+
+-   `posterior_epred` returns an $R \times N$ matrix where the $n$-th column contains posterior draws of $\mu_n = \mathbb{E}Y \mid \mathbf{x}_n$, obtained by applying the inverse link function to draws of $\eta_n$
+
+-   `posterior_predict` returns an $R \times N$ matrix with $n$-th column containing posterior predictive draws of $Y \mid \mu_n$
+:::
+
+## Hypotheses via Poststratification
+
+-   `poll` was intended to be representative of all U.S. *adults*, rather than likely voters (more common before an election)
+
+-   But it was not very representative of all U.S. adults because it was conducted online and had a lot of missingness
+
+```{r}
+strata <- # this is a tibble with 864 (= 2 * 6 * 3 * 6 * 4) rows
+  with(poll_grouped,
+       tidyr::expand_grid(Gender = levels(Gender), 
+                          Age = levels(Age), 
+                          Urban_Density = levels(Urban_Density), 
+                          Income = levels(Income), 
+                          Region = levels(Region)))
+mu <- pnorm(posterior_linpred(post, newdata = strata)) # 4000 x 864
+```
+
+```{r}
+#| eval: false
+# get the number of adults in each of the 864 strata from the Census
+Obama <- c(mu %*% adults) # this is matrix-vector multiplication
+# 4000 x 1 vector of expected Obama supporters nationwide
+```
