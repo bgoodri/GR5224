@@ -1,0 +1,111 @@
+---
+title: "GR5224 Homework 2, Due July 28, 2025 at 6PM"
+format: 
+  pdf:
+    number-sections: true
+    documentclass: article
+    include-in-header:
+      text: |
+        \usepackage{amsmath}
+        \usepackage{fullpage}
+pdf-engine: xelatex
+editor: visual
+execute: 
+  echo: true
+keep-tex: true
+---
+
+A dataset was collected by Charles Gaba on deaths from covid at the county level, which can be found [here](https://docs.google.com/spreadsheets/d/100BFc0VppVL8CIhaNh5ZiTFGBNCnGBdYzfqISAWxln8/). You could download the "Vaccination Rates" worksheet to your home directory in various formats, but I executed the following in R
+
+```{r}
+#| output: false
+
+library(dplyr)
+library(stringr)
+
+ROOT   <- "https://docs.google.com/spreadsheets/"
+FILE   <- "d/100BFc0VppVL8CIhaNh5ZiTFGBNCnGBdYzfqISAWxln8/"
+EXPORT <- "export?format=csv&id=100BFc0VppVL8CIhaNh5ZiTFGBNCnGBdYzfqISAWxln8&gid=0"
+
+Gaba <- readr::read_csv(paste0(ROOT, FILE, EXPORT), progress = FALSE,
+                        col_names = c("FIPS", "ST", "State", "County",
+                                      "Trump_num", "Total_votes", "Trump_percent",
+                                      "Pop", "two_doses_num", "two_doses_percent",
+                                      "covid_deaths_2021", "covid_deaths_2022",
+                                      "covid_deaths_diff", "death_rate"),
+                        col_types = "iccccccccccccd", skip = 1) |>
+  filter(!is.na(death_rate)) |>
+  mutate(across(ends_with("_num"), ~ as.integer(str_remove_all(.x, ","))),
+         across(contains("deaths_"), ~ as.integer(str_remove_all(.x, ","))),
+         Total_votes = as.integer(str_remove_all(Total_votes, ",")),
+         Pop = as.integer(str_remove_all(Pop, ",")),
+         across(ends_with("_percent"), ~ as.numeric(str_remove_all(.x, "%"))))
+```
+
+and then wrote the cleaned version to `Gaba.csv` in the HW2 directory that you can use.
+
+```{r}
+readr::write_csv(Gaba, file = "Gaba.csv")
+```
+
+In this homework, we are modeling covid deaths in 2022 (`covid_deaths_2022`) as a function of the percentage of voters in each county voting for Trump in the 2020 election (`Trump_percent`) and the percentage of adults with at least two doses of some covid vaccine (`two_doses_percent`), which would usually be the mRNA vaccines made by BioNTech / Pfizer or Moderna but a more traditional vaccine made by Johnson & Johnson was also available at the time.
+
+# Binomial Model
+
+Suppose the population (`Pop`) is the number of people could die of covid and everyone in the county has the same probability of dying of covid (which varies from one county to the next). Suppose you are using the logit link function, in which case the inverse link function is the standard logistic CDF, $F\left(\eta\right) = \frac{1}{1 + e^{-\eta}}$.
+
+## Prior on the Intercept
+
+Presuming that each of the predictors is centered, so that the intercept can be interpreted as the expected log-odds of someone dying of covid in 2022 in the average county, what would you chose for a prior distribution on the intercept, which we have denoted $\gamma$ in class? Why?
+
+## Prior on the Vaccination Coefficient
+
+What would you choose for a prior distribution of the coefficient on `two_doses_percent`? Note that you may want to divide `two_doses_percent` by 10 so that the coefficient could be interpreted as the expected difference in log-odds between two otherwise identical counties that differ by 10 percent in the vaccination rate. Why did you choose this prior?
+
+## Prior on the Voting Coefficient
+
+What would you choose for a prior distribution of the coefficient on `Trump_percent`? Again you may want to divide `Trump_percent` by 10 so that the coefficient could be interpreted as the expected difference in log-odds between two otherwise identical counties that differ by 10 percent in voting for Trump in 2020. Why did you choose this prior?
+
+## Prior Predictive Distribution
+
+Draw $R = 10000$ times from the prior distributions that you chose in the previous subproblems and then draw from the prior predictive distribution of covid deaths in 2022 for Manhattan only, which is FIPS code 36061
+
+```{r}
+filter(Gaba, FIPS == 36061)
+```
+
+Make some sort of plot depicting this prior predictive distribution for Manhattan. How would you describe this distribution?
+
+## Posterior Distribution
+
+Use rstanarm or bambi to draw from the posterior distribution of the three parameters conditional on the observed data in `Gaba`. For both the coefficient on vaccination and the coefficient on voting, how sure are you about the sign of the effect after having conditioned on these data?
+
+## Posterior Predictive Distribution
+
+For Manhattan only but for each of the $4000$ draws from the posterior distribution, predict the number of deaths from covid in 2022 under the entirely counterfactual scenario that 100% of the adults in Manhattan were vaccinated at least twice. How does that distribution compare to the observed number of covid deaths?
+
+# Negative Binomial Model
+
+Recall that the Poisson model is a limiting case of the binomial model as the size approaches infinity, holding the expectation fixed. This is perhaps plausible in this case because most counties (although not all) have rather large populations. Moreover, recall that a negative binomial model is a limiting case of a Poisson model as $\phi \uparrow \infty$, where $\phi$ is the shape and rate for a Gamma distribution on the (multiplicative) errors.
+
+Suppose you intend to estimate a negative binomial model with a log link for the number of covid deaths in 2022 for each county, using the vaccination rate and Trump support as predictors and using the natural logarithm of population / 100000 as an offset. Thus, the parameters pertain to the covid death rate per 100000 people.
+
+## Prior on the Overdispersion
+
+What would you choose for a prior distribution for $\phi$? Why?
+
+## Prior on the Intercept and Coefficients
+
+How would you change your priors on the remaining parameters now that we are estimating a negative binomial model with a log link and an offset, instead of a binomial model with a logit link? Why?
+
+## Prior Predictive Distribution in Hawaii
+
+For each of the five counties in the state of Hawaii and for each of $R = 10000$ draws from the prior distribution, draw from the predictive distribution of covid deaths in 2022 under this negative binomial model. Plot these predictive distributions separately for the five counties in Hawaii. Do the differences between them make sense to you? Why?
+
+## Posterior Distribution
+
+Use rstanarm or bambi to draw from the posterior distribution of the four parameters conditional on the observed data in `Gaba`. How would you describe the posterior distribution for $\phi$ and what is the substantive implication of your beliefs about $\phi$?
+
+## Model Choice
+
+Which of the two models do you think is preferable for predicting the number of covid deaths in 2022 in counties generally? Why?
