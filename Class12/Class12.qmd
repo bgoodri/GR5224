@@ -1,0 +1,293 @@
+---
+title: "More Generalized Linear Models (GLMs)"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## Data on Well Switching
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+
+
+```{r}
+library(dplyr)
+data("wells", package = "rstanarm")            # do this!
+wells <- mutate(wells, dist = dist / 100,      # better units
+                arsenic_dist = arsenic * dist) # interaction term
+x_bar <- select(wells, dist, starts_with("arsenic")) |> 
+  colMeans()
+as_tibble(wells) # we are not using assoc or educ today
+```
+
+```{r}
+#| eval: false
+help(wells, package = "rstanarm") # for more info on variables
+```
+
+## Binary Probit Generative Model
+
+::: columns
+::: {.column width="42%"}
+Math Notation $\begin{eqnarray*} \forall n: y_n & \equiv & y_n^\ast > 0 \\ \forall n: y_n^\ast & \equiv & \eta_n + \epsilon_n \\ \forall n: \epsilon_n & \thicksim & \mathcal{N}\left(0,1\right) \\ \forall n: \eta_n & \equiv & \alpha + \sum_{k = 1}^K \beta_k x_{nk} \\ \alpha & \equiv & \gamma - \sum_{k = 1}^K \beta_k \overline{x}_k \\ \gamma & \thicksim & \mathcal{N}\left(m_0, s_0\right) \\ \forall k: \beta_k & \thicksim & \mathcal{N}\left(m_k, s_k\right) \end{eqnarray*}$
+:::
+
+::: {.column width="58%"}
+::: fragment
+Change the Question Marks Now!
+
+```{r}
+#| eval: false
+# inverse CDF transformation
+m_0 <- qnorm(`?`) 
+s_0 <- `??`
+m <- 
+  c(dist = `???`, # if arsenic = 0
+    arsenic = `????`, # if dist = 0
+    arsenic_dist = `?????`)
+s <- `??????` # used for all betas
+R <- 1000
+prior <- 
+  tibble(gamma  = rnorm(R, m_0, s_0),
+         beta_1 = rnorm(R, m[1], s),
+         beta_2 = rnorm(R, m[2], s),
+         beta_3 = rnorm(R, m[3], s),
+         alpha  = gamma - beta_1 *
+           x_bar[1] - beta_2 * 
+           x_bar[2] - beta_3 *
+           x_bar[3])
+```
+
+How would you draw predictions?
+:::
+:::
+:::
+
+## Prior Predictive Distribution
+
+```{r, include = FALSE}
+m_0 <- qnorm(0.3)
+s_0 <- 0.4
+m <- c(-1 / 5, 1 / 3, 0)
+names(m) <- names(x_bar)
+s <- 0.25
+R <- 1000
+prior <- 
+  tibble(gamma  = rnorm(R, m_0, s_0),
+         beta_1 = rnorm(R, m[1], s),
+         beta_2 = rnorm(R, m[2], s),
+         beta_3 = rnorm(R, m[3], s),
+         alpha  = gamma - beta_1 *
+           x_bar[1] - beta_2 * 
+           x_bar[2] - beta_3 *
+           x_bar[3])
+```
+
+```{r}
+predictions <- cross_join(prior, wells) |> 
+  transmute(eta = alpha + beta_1 * dist +
+              beta_2 * arsenic + beta_3 * arsenic_dist,
+            epsilon = rnorm(n()),
+            y_star = eta + epsilon,
+            y = y_star > 0) |>  # these are the predictions in {0,1} 
+  ungroup()
+slice_head(predictions, n = 1)
+```
+
+. . .
+
+What do you anticipate this plot will look like for your generative model? What would be (un)reasonable?
+
+```{r}
+#| fig-show: hide
+library(ggplot2)
+ggplot(predictions) + # plot on next slide
+  geom_density(aes(x = pnorm(eta))) +
+  labs(x = "Probability of Switching",
+       y = "Density")
+```
+
+## Previous Plot (yours is $\bigcup$-shaped)
+
+```{r}
+#| echo: false
+ggplot(predictions) + 
+  geom_density(aes(x = pnorm(eta))) +
+  labs(x = "Probability of Switching",
+       y = "Density")  
+```
+
+## Posterior Distribution
+
+```{r}
+library(rstanarm)
+options(mc.cores = parallel::detectCores())
+```
+
+```{r, post}
+#| cache: true
+
+post <- stan_glm(switch ~ dist * arsenic, # includes main effects too
+                 data = wells,
+                 family = binomial(link = "probit"), # not gaussian
+                 prior_intercept = normal(m_0, s_0), # on gamma
+                 prior = normal(m, s))               # on betas
+
+as_tibble(post) # (Intercept) is alpha, not gamma
+```
+
+## Plot of Posterior Margins (in $\eta$ units)
+
+```{r}
+plot(post, plotfun = "areas") # (Intercept) is alpha, not gamma
+```
+
+## Posterior Probability of Switching
+
+```{r}
+library(tidyr)
+nd <- expand_grid(
+  dist = round(quantile(wells$dist, probs = c(0.25, 0.5, 0.75)), 2),  
+  arsenic = quantile(wells$arsenic, probs = c(0.25, 0.5, 0.75))) |>  
+  mutate(id = as.character(1:n())) # pivot_longer yields the same id
+nd
+mu <- posterior_epred(post, newdata = nd) # R x 9 probability matrix
+draws <- pivot_longer(as_tibble(mu), cols = everything(), 
+                      names_to = "id", values_to = "mu") |>  
+  inner_join(nd, by = "id") # 9R x 4 tibble that includes predictors
+```
+
+## Plot of Posterior Switch Probability
+
+```{r}
+ggplot(draws) + geom_density(aes(mu)) + xlim(0, 1) +
+  facet_wrap(~ dist + arsenic, labeller = "label_both")
+```
+
+## Value-Added of a Study
+
+```{r}
+posterior_vs_prior(post)
+```
+
+## YouTube Data
+
+```{r}
+youtube <- readr::read_csv("https://osf.io/download/z56vg/")
+colnames(youtube)[-1] # "id" variable is not shown
+```
+
+. . .
+
+-   `views` is the number of times each of $50$ videos (on scoliosis) have been viewed on YouTube
+
+-   `scol` is a measure of scientific accuracy of the video
+
+-   `age2` is the number of days the video has been on YouTube
+
+. . .
+
+Recall that the Poisson distribution is the limit of a binomial distribution as the number of trials goes to infinity, while the expected count remains fixed and finite
+
+## Count Generative Model
+
+::: columns
+::: {.column width="52%"}
+Math Notation $\begin{eqnarray*} \forall n: y_n & \thicksim & \mathcal{P}\left(\mu_n \epsilon_n\right) \\ \forall n: \epsilon_n & \thicksim & \mathcal{G}\left(\phi, \phi\right) \\ \phi & \thicksim & \mathcal{E}\left(r\right) \\ \forall n: \mu_n & \equiv & e^{\eta_n} \\ \forall n: \eta_{n} & \equiv & \gamma + \mbox{offset } + \\ & & \sum_{k = 1}^K \beta_k \left(x_{nk} - \overline{x}_k\right) \\ \gamma & \thicksim & \mathcal{N}\left(m_0, s_0\right) \\ \forall k: \beta_k & \thicksim & \mathcal{N}\left(m_k, s_k\right) \end{eqnarray*}$
+:::
+
+::: {.column width="48%"}
+::: fragment
+R Code to Draw
+
+```{r}
+prior <- 
+  tibble(gamma = rnorm(R, 5, 2),
+         beta = rnorm(R, 0, 1),
+         alpha = gamma - beta *
+           mean(youtube$scol),
+         phi = rexp(R, .1))
+predictions <- 
+  cross_join(prior, youtube) |> 
+  transmute(
+    eta = alpha + log(age2) +
+          beta * scol,
+    mu = exp(eta),
+    epsilon = 
+      rgamma(n(), phi, phi),
+    y = rpois(n(), mu * epsilon)
+  )
+```
+:::
+:::
+:::
+
+## Prior Predictive Distribution Plot
+
+```{r}
+ggplot(predictions) + geom_density(aes(y)) + scale_x_log10() # skewed
+```
+
+## Negative-Binomial Log-Likelihood
+
+::: incremental
+-   $\mathcal{L}\left(\gamma, \beta, \boldsymbol{\epsilon}; \mathbf{y}\right) = \prod\limits_{n = 1}^N \Pr\left(y_n \mid \mu_n \times \epsilon_n\right) = \prod\limits_{n = 1}^N \frac{\left(\mu_n \epsilon_n\right)^{y_n} e^{-\mu_n \epsilon_n}}{y_n!}$
+
+-   Frequentist software cannot MLE any $\epsilon_n$ so they marginalize: $\ell\left(\gamma, \beta, \phi, \bcancel{\boldsymbol{\epsilon}}; \mathbf{y}\right) = \ln \prod\limits_{n = 1}^N \int\limits_0^\infty \frac{\phi^\phi \epsilon_n^{\phi - 1} e^{-\phi \epsilon_n}}{\Gamma\left(\phi\right)} \frac{\left(\mu_n \epsilon_n\right)^{y_n} e^{-\mu_n \epsilon_n}}{y_n!} d\epsilon_n = \\ \ln\prod\limits_{n = 1}^N \frac{\phi^\phi \Gamma\left(\phi + y_n\right) \mu_n^{y_n}}{y_n! \Gamma\left(\phi\right) \left(\phi + \mu_n\right)^{\phi + y_n}} = N \left(\phi \ln \phi - \ln \Gamma\left(\phi\right) \right) + \sum\limits_{n = 1}^N \\ \left[\ln \Gamma\left(\phi + y_n\right) + y_n \ln \mu_n - \ln y_n! - \left(\phi + y_n\right) \ln \left(\phi + \mu_n\right) \right],$ where $\mu_n = e^{\eta_n}$ and $\eta_n = \gamma + \mbox{ offset } + \beta \left(x_n - \overline{x}\right)$
+:::
+
+## Posterior Distribution
+
+```{r}
+# Bayesian imitation of MASS::glm.nb
+# you could also call stan_glm(...) and specify
+# family = neg_binomial_2(link = "log")
+post <- stan_glm.nb(views ~ offset(log(age2)) + scol,
+                    data = youtube, 
+                    link = "log",                   # the default
+                    prior_intercept = normal(5, 2), # on gamma
+                    prior = normal(0, 1),           # on beta
+                    prior_aux = exponential(0.1))   # on phi
+```
+
+```{r}
+#| eval: false
+plot(post, plotfun = "areas") # on next slide; (Intercept) is alpha
+```
+
+## Plot from Previous Slide
+
+```{r}
+#| echo: false
+plot(post, plotfun = "areas")
+```
+
+## What If All Videos Were Accurate?
+
+```{r}
+PPD <- posterior_predict(post, offset = log(youtube$age2), # needed
+                         newdata = mutate(youtube, scol = max(scol)))
+sweep(PPD, MARGIN = 2, STATS = youtube$views, FUN = `/`) %>% 
+  colMeans %>%
+  matrix(nrow = 5, ncol = 10) %>% 
+  round(digits = 3)
+```
+
+. . .
+
+Most videos would be expected to have much fewer views, although the error overdispersion is so high that some videos might randomly get more views
