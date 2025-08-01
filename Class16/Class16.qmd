@@ -1,0 +1,280 @@
+---
+title: "Modeling in the Stan Language"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## Categorical Logit Model for $\Omega = 1:J$
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+
+::: columns
+::: {.column width="53%"}
+Math Notation $\begin{eqnarray*} \forall n: y_n & \equiv & \arg\max_j \eta_{nj} + \epsilon_{nj} \\ \forall n,j: \epsilon_{nj} & \thicksim & \mbox{Gumbel}\left(0,1\right) \\ \forall n,j: \eta_{nj} & \equiv & \alpha_j + \sum_{k = 1}^K \beta_{kj} x_{nk} \\ \forall j: \alpha_j & \equiv & \gamma_j - \sum_{k = 1}^K \beta_{kj} \overline{x}_k \\ \forall j: \gamma_j & \thicksim & \mathcal{N}\left(m_{0j}, s_{0j}\right) \\ \forall k,j: \beta_{kj} & \thicksim & \mathcal{N}\left(m_{kj}, s_{kj}\right) \end{eqnarray*}$
+:::
+
+::: {.column width="47%"}
+::: fragment
+Code to Draw Parameters
+
+```{r}
+library(dplyr)
+library(purrr)
+R <- 1000
+m0 <- rep(0, 3)
+# for identification
+s0 <- c(0, .5, .5) 
+m <- rep(0, 3)
+s <- c(0, rep(1, 2))
+prior <- map_df(1:3, ~ {
+  tibble(
+    j = .x,
+    gamma = rnorm(R, m0[j],
+                  s0[j]),
+    beta = rnorm(R, m[j],
+                 s[j])
+  )
+})
+dim(prior)
+```
+:::
+:::
+:::
+
+## Prior Predictive Distribution
+
+```{r}
+#| eval: false
+predictions <- 
+  cross_join(prior, data) |> 
+  group_by(j) |> 
+  transmute(eta = gamma + beta * x, # x has been centered
+            n = 1:length(x),        # index observations
+            .groups = "drop") |> 
+  # this is how to draw from a standard Gumbel
+  mutate(epsilon = -log(-log(runif(n()))),
+         r = rep(1:R, each = 3 * length(x))) |> 
+  group_by(n, r) |> 
+  summarize(y = which.max(eta + epsilon),
+            .groups = "drop") |> 
+  ungroup()
+```
+
+. . .
+
+-   The probability that $y_n = j$ turns out to be $\mu_{j} = \frac{e^{\eta_j}}{\sum_{k = 1}^J e^{\eta_k}}$ so $\ell\left(\gamma, \beta;\mathbf{y}\right) = \sum_{n = 1}^N \sum_{j = 1}^J \mathbb{I}\left(y_n = j\right) \ln \frac{e^{\eta_j}}{\sum_{k = 1}^J e^{\eta_k}}$
+
+-   Called categorical, although SL refers to it as multinomial
+
+## Primitive Object Types in Stan
+
+- In Stan / C++, variables must declared with types
+- In Stan / C++, statements are terminated with semi-colons
+- Primitive scalar types: `real x;` or `int K;`
+    - Unknowns cannot be `int` because not differentiable
+    - Can condition on integers because derivatives not needed
+- Implicitly real `vector[K] z;` or `row_vector[K] z;`
+- Implicitly real `matrix[N,K] X;` can have 1 column / row
+
+## Containers in Stan
+
+- Arrays are just holders of any other homogenous objects
+    - `array[N] real x` is similar to `vector[N] x;` but lacks linear algebra functions
+    - `array[K] vector[N] X;` and `array[N] row_vector[K] X` are similar to
+      `matrix[N,K] X;` but lack linear algebra functionality, although
+      they have uses in loops
+- Vectors and matrices cannot store integers,
+  so instead use possibly multidimensional integer arrays `array[N] int y;` or `array[N,P] int Y;`
+- Can also utilize `tuple`s
+
+## Optional `functions` Block
+
+- Stan permits users to define and use their own functions
+- If used, must be defined in a leading `functions` block
+- Can only validate constraints inside user-defined functions
+- Very useful for several reasons:
+    - Easier to reuse across different .stan programs
+    - Makes subsequent chunks of code more readable
+    - Enables posteriors with Ordinary Differential Equations, algebraic
+      equations, and integrals
+    - Can be exported to R via `rstan::expose_stan_functions()`
+- All functions, whether user-defined or build-in, must be called by
+argument position rather than by argument name, and there are no default
+arguments
+- User-defined functions cannot have the same name as existing functions
+or keywords and are case-sensitive
+
+## Constrained Object Declarations
+
+Outside of the `functions` block, any primitive can be bounded:
+
+- `int<lower = 1> K`
+- `real<lower = -1, upper = 1> rho;`
+- `vector<lower = 0>[K] alpha;` (similarly for a `matrix`)
+
+## Specialized Vectors
+
+- A `vector` (but not a `row_vector`) can be specialized:
+    - `unit_vector[K] x;` implies $\sum_{k=1}^{K}x_{k}^{2}=1$
+    - `simplex[K] x;` implies $x_{k}\geq0\,\forall k$ and $\sum_{k=1}^{K}x_{k}=1$
+    - `ordered[K] x;` implies $x_{j}<x_{k}\,\forall j<k$
+    - `positive_ordered[K] x;` implies $0<x_{j}<x_{k}$
+    - `sum_to_zero_vector[K] x;` implies $\sum_{k = 1}^K x_k = 0$
+    
+## Specialized Matrices
+
+- A `matrix` can be specialized to enforce constraints:
+    - `cov_matrix[K] Sigma;` or better `cholesky_factor_cov[K, K] L;`
+    - `corr_matrix[K] Lambda;` or `cholesky_factor_corr[K] C;`
+- There is also `column_stochastic_matrix` and `row_stochastic_matrix` but no `doubly_stochastic_matrix` yet
+
+## "Required" `data` Block
+
+- All knowns passed to Stan by NAME, such as
+  outcomes $\left(\mathbf{y}\right)$, covariates $\left(\mathbf{X}\right)$,
+  constants $\left(K\right)$, and / or known hyperparameters
+- Basically, everything posterior distribution conditions on
+- Can have comments in C++ style (`//` or `/* ... */`)
+- Whitespace is essentially irrelevant, except after keywords
+```{stan output.var="data", eval = FALSE}
+data {
+  int<lower = 0> N; // number of observations
+  int<lower = 0> K; // number of predictors
+  matrix[N, K] X;   // matrix of predictors
+  int<lower = 2> J; // number of outcome categories
+  array[N] int<lower = 1, upper = J> y;   // outcomes
+  int<lower = 0, upper = 1> prior_only;   // ignore data?
+} // data block can include stuff for priors
+```
+
+## "Required" `parameters` Block
+
+- Declare exogenous unknowns whose posterior distribution is sought
+- Cannot declare any integer parameters, only real parameters
+- Must specify the parameter space but `lower` and `upper`
+bounds are implicitly $\pm\infty$ if unspecified
+```{stan output.var="parameter", eval = FALSE}
+parameters {
+  vector[J - 1] gamma_free;
+  matrix[K, J - 1] beta_free;
+}
+```
+- Any change-of-variables adjustment due to the transformation from
+an unconstrained parameter space to the constrained space
+is handled automatically and added to `target`
+
+## `transformed parameters` Block
+
+- Comes after the `parameters` block but before the `model` block
+- Need to declare objects before they are assigned
+- Calculate endogenous unknowns that are deterministic functions of things declared in earlier blocks
+- Used to create interesting intermediate inputs to the log-kernel
+- Declared constraints are validated and samples are stored
+```{stan output.var="tparameter", eval = FALSE}
+transformed parameters {
+  vector[J] gamma   = append_row(0, gamma_free);
+  matrix[K, J] beta = append_col(rep_vector(0, K), beta_free);
+}
+```
+
+## "Required" `model` Block
+
+- Can declare endogenous unknowns and assign to them
+- Constraints cannot be declared / validated and samples not stored
+- The `model` block must define (something proportional to) $\text{target}=\log\left(f\left(\boldsymbol{\theta}\right)\times f\left(\left.\mathbf{y}\right|\boldsymbol{\theta},\cdot\right)\right)=\log f\left(\boldsymbol{\theta}\right)+\log f\left(\left.\mathbf{y}\right|\boldsymbol{\theta},\cdot\right)$
+- There is an internal reserved symbol called `target` that is
+initialized to zero (before change-of-variable adjustments) you increment by `target += ...;`
+- Functions ending `_lpdf` or `_lpmf` return scalars even if some of their arguments are vectors or 
+  one-dimensional arrays, in which case it sums the log density/mass over the presumed conditionally
+  independent elements
+
+## Example of `model` Block  
+```{stan output.var="model", eval = FALSE}
+model {
+  target += std_normal_lpdf(gamma_free);
+  target += std_normal_lpdf(to_vector(beta_free));
+  if (!prior_only) {
+    target += categorical_logit_glm_lpmf(y | X, gamma, beta);
+  } 
+}
+```
+
+## `generated quantities` Block
+
+- Can declare more endogenous knowns and assign to them
+- Samples are stored
+- Can reference anything except stuff in the `model` block
+- Can also do this afterward, but primarily used for
+    - Interesting functions of posterior that don't involve the log-likelihood
+    - Posterior predictive distributions or functions thereof
+    - The log-likelihood for each observation to pass to `loo`
+
+## `generated quantities` Example
+
+```{stan output.var="gqs", eval = FALSE}
+generated quantities {
+  vector[N] log_lik; // for use with loo() etc.
+  for (n in 1:N) {
+    log_lik[n] = categorical_logit_glm_lpmf(y[n] | X[n, ], gamma, beta);
+  }
+}
+```
+
+
+## Entire Stan Program {.smaller}
+
+```{r, comment="", echo = FALSE}
+writeLines(readLines("categorical_logit.stan"))
+```
+
+## Categorical Plants
+
+```{r}
+data(iris) # famous dataset
+colnames(iris)
+levels(iris$Species)
+X <- model.matrix(Species ~ . - 1, data = iris)
+X <- sweep(X, MARGIN = 2, STATS = colMeans(X), FUN = `-`)
+y <- as.integer(iris$Species)
+```
+
+```{r}
+library(cmdstanr)
+options(mc.cores = parallel::detectCores())
+```
+
+```{r}
+#| label: categorical_logit
+#| cache: true
+#| output: false
+mod <- cmdstan_model("categorical_logit.stan")
+post <- mod$sample(data = list(N = nrow(X), K = ncol(X), X = X,
+                               J = n_distinct(y), y = y, prior_only = 0L),
+                   output_dir = getwd())
+```
+
+## Checking
+
+```{r}
+post$cmdstan_diagnose()
+post$loo()
+```
+
+
+
