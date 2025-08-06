@@ -1,0 +1,280 @@
+---
+title: "More Hierarchical Models"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## Hierarchical Measurement Models
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+
+```{r}
+#| message: false
+source("macroeconomic_data.R")
+rstanarm::stan_glmer(y ~ 1 + (1 | quarter_startdate), 
+                     family = gaussian, refresh = 0,
+                     data = tidyr::pivot_longer(data, c(GDI, GDP), 
+                                                values_to = "y"),
+                     subset = quarter_startdate < "2020-01-01",
+                     prior_intercept = rstanarm::normal(2.5, 0.5))
+```
+
+## Hierarchical Models in Psychology
+
+-   In political science and economics, the "big" units are often countries or sub-national political areas like states and the "small" units are people
+-   In [psychology](https://arxiv.org/pdf/1506.04967.pdf), the "big" units are often people and the "small" units are questions or outcomes on repeated tasks
+-   Hierarchical model syntax is like
+
+```{r, eval = FALSE}
+y ~ x + (x | person) + (1 | question)
+```
+
+-   Question of interest is how to predict `y` for a new "big" unit (person), as opposed to predicting how well an old "big" unit will answer a new "small" unit (question)
+
+## Hierarchical Default Priors
+
+```{r, message = FALSE}
+# from http://www.tqmp.org/RegularArticles/vol14-2/p099/p099.pdf
+dat <- readr::read_csv("https://osf.io/5cg32/download")
+```
+
+```{r}
+#| message: false
+library(brms)
+get_prior(valence ~ arousal + (1 + arousal | PID), data = dat) |>  
+  as_tibble() |> 
+  select(prior, class, coef) 
+```
+
+## Hierarchical PPD {.smaller}
+
+::: columns
+::: {.column width="50%"}
+Math Notation $\begin{eqnarray*} \forall n: y_n & \equiv & \eta_n + \epsilon_{n} \\ \forall n: \epsilon_{n} & \thicksim & \mathcal{N}\left(0, \sigma_\epsilon\right) \\ \sigma_\epsilon & \thicksim & \mathcal{E}\left(r_\epsilon\right) \\ \forall n: \eta_{n} & \equiv & \alpha + a_j + \left(\beta + b_j\right) x_{n} \\ \alpha & \thicksim & \mathcal{N}\left(m_0, s_0\right) \\ \beta & \thicksim & \mathcal{N}\left(m_1, s_1\right) \\ \forall j: b_j & \thicksim & \mathcal{N}\left(\frac{\sigma_b}{\sigma_a} \rho a_j, \sqrt{1 - \rho^2} \sigma_b\right) \\ \forall j: a_j & \thicksim & \mathcal{N}\left(0, \sigma_a\right) \\ \sigma_a, \sigma_b & \thicksim & \mathcal{E}\left(r\right) \\ \rho & \thicksim & \mathcal{U}\left(-1,1\right) \end{eqnarray*}$
+:::
+
+::: {.column width="50%"}
+::: fragment
+Code to Draw
+
+```{r}
+R <- 1000
+priors <- tibble (
+  rho = runif(R, min = -1, max = 1),
+  sigma_a = rexp(R, 0.5),
+  sigma_b = rexp(R, 0.5),
+  b_a = sigma_b / sigma_a * rho,
+  s = sqrt(1 - rho^2) * sigma_b,
+  beta = rnorm(R, 0, 1),
+  alpha = rnorm(R, 50, 20),
+  sigma = rexp(R, 0.1)
+)
+predictions <- cross_join(dat, priors) |> 
+  group_by(PID) |> # critical!
+  transmute(a = rnorm(n(), sd = sigma_a),
+            b = rnorm(n(), mean = b_a * a,
+                      sd = s),
+            eta = alpha + a + 
+              (beta + b) * arousal,
+            epsilon = rnorm(n(), sd = sigma),
+            y = eta + epsilon) |> 
+  ungroup()
+```
+:::
+:::
+:::
+
+## Hierarchical Example
+
+```{r, psych}
+#| cache: true
+#| results: hide
+post <-  brm(valence ~ arousal + (1 + arousal | PID), data = dat,
+             prior = prior(normal(50, 20), class = "Intercept") +
+               prior(normal(0, 1), class = "b") +
+               prior(exponential(0.1), class = "sigma") +
+               prior(exponential(0.5), class = "sd"),
+             control = list(adapt_delta = 0.97))
+```
+
+```{r}
+post
+```
+
+## PSISLOOCV Estimator of ELPD
+
+```{r}
+loo(post) # there were 46 nominal unknowns
+```
+
+## Posterior Predictive Checks
+
+```{r}
+pp_check(post, type = "ribbon_grouped", x = "arousal", group = "PID")
+```
+
+## Posterior Prediction
+
+```{r}
+nd <- filter(dat, PID == 1) |> 
+  mutate(PID = 0) # now predict for person 0 who did not exist before
+y_0 <- posterior_predict(post, newdata = nd, allow_new_levels = TRUE)
+```
+
+How is that even possible? For each of the $R$ posterior draws,
+
+1.  Draw $a_0$ and $b_0$ from a bivariate normal given $\sigma_a$, $\sigma_b$, $\rho$
+2.  Form $\boldsymbol{\mu} \equiv \alpha + a_0 + \left(\beta + b_0\right) \mathbf{x}$
+3.  Draw each $\epsilon$ from a normal distribution with mean zero and standard deviation $\sigma$
+4.  Form the prediction vector $\mathbf{y} = \boldsymbol{\mu} + \boldsymbol{\epsilon}$
+
+This process yields much better predictions for new big units than supervised learning or Frequentist prediction methods
+
+## Two Stage Least Squares (2SLS)
+
+-   Instrumental variables designs are common in economics but the principles behind it are conflated with the 2SLS estimator of the instrumental variable model
+
+    1.  Use OLS to predict the causal variable with all the other predictors, including the "instrument"
+
+    2.  Use the fitted values from (1) in place of the causal variable when fitting the outcome with OLS, including all the other predictors except the "instrument"
+
+-   2SLS is not even a good estimator on Frequentist grounds with finite data and how bad it is depends on the characteristics of the data-generating process
+
+## Wald Estimator
+
+If the treatment variable $X$ is binary and the instrument $Z$ is binary, then an IV point estimator can be written as$\Delta = \frac{\mathrm{cov}\left(Z, Y\right)}{\mathrm{cov}\left(Z, X\right)}$
+
+-   2SLS and FIML are equivalent to $\Delta$ under these conditions
+
+-   Both the numerator and the denominator are asymptotically normal across randomly sampled datasets
+
+-   The [distribution](https://en.wikipedia.org/wiki/Ratio_distribution#Uncorrelated_noncentral_normal_ratio) of a ratio of normal RVs does not have an expectation
+
+-   FIML does not have an expectation either. 2SLS has an expectation only if there are excess instruments
+
+## Generative Model with an Instrument {.smaller}
+
+::: columns
+::: {.column width="46%"}
+Math Notation $\begin{eqnarray*} \forall n: t_n,y_n & \thicksim & \mathcal{N}^2\left(\mu_{n,1}, \mu_{n,2}, \sigma_{1}, \sigma_{2}, \rho\right) \\ \sigma_1 & \thicksim & \mathcal{E}\left(r_1\right) \\ \sigma_2 & \thicksim & \mathcal{E}\left(r_2\right) \\ \rho & \thicksim & \mathcal{U}\left(-1,1\right) \\ \forall n: \mu_{n,1} & \equiv & \lambda + \zeta \left(z_{n} - \overline{z}\right) + \\ & & \sum_{k} \theta_k \left(x_{n,k} - \overline{x}_k\right) \\ \lambda & \thicksim & \mathcal{N}\left(M_0, S_0\right) \\ \zeta & \thicksim & \mathcal{N}\left(\uparrow,v\right) \\ \forall k: \theta_k & \thicksim & \mathcal{N}\left(M_k,S_k\right) \\ \forall n: \mu_{n,2} & \equiv & \gamma + \sum_{k} \beta_k \left(x_{n,k} - \overline{x}_k\right) \\ \gamma & \thicksim & \mathcal{N}\left(m_0, s_0\right) \\ \forall k: \beta_k & \thicksim & \mathcal{N}\left(m_k,s_k\right) \\ \end{eqnarray*}$
+:::
+
+::: {.column width="54%"}
+::: fragment
+::: incremental
+-   If $t_n$ and $y_n$ are distributed bivariate normal, then $y_n \mid t_n$ is distributed univariate normal with expectation $\mu_2 + \frac{\sigma_2}{\sigma_1}\rho \left(t_n - \mu_1\right)$ and standard deviation $\sqrt{1 - \rho^2} \sigma_2$
+-   The causal effect is $\Delta = \frac{\sigma_2}{\sigma_1}\rho$ (in the model)
+-   You need an informative prior on $\zeta$ that makes it monotonic
+-   You could also restrict the sign of $\rho$ by using a $\mathcal{U}\left(0,1\right)$ or $\mathcal{U}\left(-1,0\right)$ prior
+-   Bayesians can use the same MCMC algorithm in Stan that they should use for other models
+-   Once you have posterior draws of $\sigma_2$, $\sigma_1$, and $\rho$ , you can form posterior draws of $\Delta$
+:::
+:::
+:::
+:::
+
+## Angrist and Krueger (1991) Data
+
+```{r}
+library(dplyr)
+ROOT <- "http://higheredbcs.wiley.com/legacy/college/"
+PATH <- "lancaster/1405117206/datasets/AKdata.zip"
+if (!file.exists("AKdata.zip")) {
+  download.file(paste0(ROOT, PATH), destfile = "AKdata.zip")
+  unzip("AKdata.zip")  
+}
+AKdata <- read.table("AKdata.txt", header = FALSE, skip = 4,
+                     col.names = c("ID", "log_wage", "schooling",
+                                   "birth_quarter", "age")) |> 
+  mutate(birth_quarter = as.ordered(birth_quarter), age = age / 10)
+AER::ivreg(log_wage ~ age + schooling | age + birth_quarter, 
+           data = AKdata) |> summary()
+```
+
+## Instrumental Variables with brms
+
+```{r}
+library(brms)
+options(mc.cores = parallel::detectCores())
+get_prior(brmsformula(mvbind(schooling, log_wage) ~ age + mo(birth_quarter)) + 
+            set_rescor(TRUE), data = AKdata) |> 
+    as_tibble() |> 
+    select(prior, class, coef, resp)
+```
+
+## WTF is LKJ?
+
+-   Lewandowski, Kurowicka, & Joe (2009) derived a correlation matrix distribution that is like a symmetric beta distribution. If its shape parameter is $1$, then the PDF is constant and if its shape parameter is $> 1$, the PDF is $\bigcap$-shaped on $\left(-1,1\right)$.
+
+-   In this case, the correlation matrix is just $2 \times 2$ with one $\rho$
+
+-   Putting a prior on a correlation matrix and the standard deviations allows you to induce a prior on the covariances $\sigma_{ij} = \rho_{ij} \sigma_i \sigma_j$, which was a great improvement over Bayesian modeling in the 1990s
+
+## Informative Priors
+
+```{r}
+my_prior <- 
+  prior(normal(5, 1), class = "Intercept", resp = "logwage") +
+  # exclusion restrcitions
+  prior(constant(0), class = "b", 
+        coef = "mobirth_quarter", resp = "logwage") +
+  prior(normal(0, 0.5), class = "b", coef = "age", resp = "logwage") +
+  prior(exponential(1), class = "sigma", resp = "logwage") +
+  
+  prior(normal(12, 2), class = "Intercept", resp = "schooling") +
+  prior(normal(0.1, 0.05), class = "b", 
+        coef = "mobirth_quarter", resp = "schooling") +
+  prior(normal(0.25, 1), class = "b", coef = "age", resp = "schooling") +
+  prior(exponential(0.5), class = "sigma", resp = "schooling") +
+  prior(lkj(1.5), class = "rescor")
+```
+
+## Posterior Distribution
+
+```{r, iv}
+#| label: AK
+#| cache: true
+#| results: hide
+post <- brm(brmsformula(mvbind(schooling, log_wage) ~ 
+                          age + mo(birth_quarter)) + # takes a long time
+              set_rescor(TRUE), data = AKdata, prior = my_prior) 
+```
+
+```{r}
+#| fig-show: hide
+#| eval: false
+library(ggplot2)
+as_tibble(post) |> 
+  mutate(Delta = sigma_logwage / sigma_schooling * 
+           rescor__schooling__logwage) |> 
+  ggplot() + # plot on next slide
+  geom_density(aes(x = Delta))
+```
+
+## Plot from Previous Slide
+
+```{r}
+#| echo: false
+library(ggplot2)
+as_tibble(post) |> 
+  mutate(Delta = sigma_logwage / sigma_schooling * 
+           rescor__schooling__logwage) |> 
+  ggplot() +
+  geom_density(aes(x = Delta))
+```
