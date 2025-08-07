@@ -1,0 +1,61 @@
+---
+title: "Hierarchical Models in Stan"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## McElreath on Hierarchical Models
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+
+-   Bayesian hierarchical models should be the default and you should need strong theoretical and empirical reasons to not utilize a hierarchical model, whose advantages include:
+
+    1.  "Improved estimates for repeat sampling" (within units)
+
+    2.  "Improved estimates for imbalance in sampling"
+
+    3.  "Estimates of variation"
+
+    4.  "Avoid averaging, retain variation"
+
+-   MLE is a terrible estimator of hierarchical models and penalized MLE is not much better because a point estimate is a very incomplete summary of the model's implications
+
+## Data for a Binomial GLM
+
+```{r, message = FALSE}
+library(dplyr)
+funding <- 
+  tibble(
+    discipline   = rep(c("Chemical sciences", "Physical sciences", "Physics", "Humanities", 
+                         "Technical sciences",  "Interdisciplinary", "Earth/life sciences", 
+                         "Social sciences", "Medical sciences"),
+                     each = 2) %>% as.factor,
+    female       = rep(0:1, times = 9),
+    applications = c(83, 39, 135, 39, 67, 9, 230, 166, 189, 
+                     62, 105, 78, 156, 126, 425, 409, 245, 260),
+    awards       = c(22, 10, 26, 9, 18, 2, 33, 32, 30, 
+                     13, 12, 17, 38, 18, 65, 47, 46, 29)
+  )
+stan_data <- with(funding, list(N = nrow(funding), J = nlevels(discipline),
+                                discipline = as.integer(discipline), female = female,
+                                applications = applications, awards = awards,
+                                prior_only = 0)) # needs more stuff for priors
+```
+
+See grants.stan and grants2.stan
