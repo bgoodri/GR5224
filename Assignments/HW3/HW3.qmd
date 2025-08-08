@@ -1,0 +1,128 @@
+---
+title: "GR5224 Homework 3, Due August 7, 2025 at 6PM"
+format: 
+  pdf:
+    number-sections: true
+    documentclass: article
+    include-in-header:
+      text: |
+        \usepackage{amsmath}
+        \usepackage{fullpage}
+pdf-engine: xelatex
+editor: visual
+execute: 
+  echo: true
+keep-tex: true
+---
+
+The objective in golf is to get the ball into the hole in as few strokes as possible. There are $18$ challenges in a round of golf (which are also referred to as "holes"), and a golf tournament usually consists of four rounds. If a golfer hits the ball into the water or hits it out of bounds or commits various rules violations, they are assessed penalty strokes (which do not advance the ball toward the hole).
+
+There is a professional golf tournament going on in Memphis this weekend called the St. Jude Championship. The data from the first round (on Thursday) can be read via
+
+```{r}
+dataset <- readr::read_csv("dataset.csv", col_types = "icii")
+```
+
+A few random rows look like this:
+
+```{r}
+dplyr::sample_n(dataset, size = 10)
+```
+
+I will update the dataset Friday evening with the scores from the second round (and add that column to `dataset`), but you can get started any time. You will need to pass one or more columns of `dataset` to the `data` block of your Stan programs.
+
+Any Probability Mass Function (PMF) for the number of strokes it takes a golfer to hit the ball into the hole can be rather complicated. It depends on the "par" value of a hole, which is loosely the number of strokes the golf course supervisor thinks a good golfer should usually need to hit the ball into the hole. These par values are known for each hole, are either 3, 4, or 5, and will need to be passed to the `data` block of your Stan programs.
+
+```{r}
+par_values <- c(4, 4, 5, 3, 4, 4, 4, 3, 4, 4, 3, 4, 4, 3, 4, 5, 4, 4) |> 
+  as.integer()
+```
+
+In addition, we will assume that there is some unknown probability between $0$ and $\frac{1}{2}$ (exclusive) that a golfer hits a "good" shot and some unknown probability between $0$ and $\frac{1}{2}$ (exclusive) that a golfer hits a "bad" shot, which leaves some positive probability that a golfer hits a "mediocre" shot. The basic idea is that the ball cannot go into the hole on a bad shot, but a good shot either goes into the hole or makes it much easier to get the ball into the hole on a subsequent shot.
+
+The PMF we will use is rather tedious to write down, and its logarithm is even more so if you endeavor to make it numerically accurate even in extreme cases. Thus, you can simply copy this function into your Stan program to evaluate the log-probability of it taking `strokes` to get the ball into a hole with a given `par` value and respective probabilities of a `good` and `bad` shot.
+
+```{stan, output.var = "golf_lpmf", eval = FALSE}
+functions {
+  real golf_lpmf(int strokes, int par, real good, real bad) {
+    if (strokes < 2) reject("strokes must be at least 2");
+    if (par < 3) reject("par must be at least 3");
+    if (good <= 0 || good >= 0.5) reject("good must be on (0, 0.5)");
+    if (bad  <= 0 || bad  >= 0.5) reject("bad  must be on (0, 0.5)");    
+    int k = (par + 1) / 2;
+    if (strokes  < k) return negative_infinity();
+    vector[par - k + 1] terms;
+    real log_good = log(good);
+    real log_bad  = log(bad);
+    real log_mediocre = log1m(good + bad);
+    int i = 0;
+    for (j in k:par) {
+      i += 1;
+      int strokes_j = strokes - j;
+      if (strokes_j < 0) {
+        terms[i] = negative_infinity();
+        continue;
+      }
+      int par_j = par - j;
+      int twoj_par = 2 * j - par;
+      int twoj_par_1 = twoj_par - 1;
+      terms[i] = lchoose(strokes - 1, strokes_j)
+               + strokes_j * log_bad
+               + log_sum_exp(lchoose(j - 1, twoj_par_1) + 
+                             (par_j + 1) * log_good +
+                             twoj_par_1 * log_mediocre,
+                             lchoose(j, twoj_par) + 
+                             par_j * log_good + 
+                             twoj_par * log_mediocre);
+    }
+    return log_sum_exp(terms);
+  }
+}
+```
+
+This assumes that it is impossible for a golfer to make a "hole-in-one" on a par 3 or an "hole-in-two" on a par 5 — even though those both do happen occasionally — because they have not happened yet at the 2025 St. Jude Championship.
+
+# Flat Model
+
+## Stan Program
+
+Write a Stan program that conditions on the data from the first two rounds of the St. Jude Championship where the probability of a "good" and a "bad" shot depends only on the hole in question, but you do not need to look at a map of the golf course to accomplish this. In other words, the `parameters` block of the Stan program would look like
+
+```{stan, output.var = "parameters", eval = FALSE}
+parameters {
+  array[18] real<lower = 0, upper = 0.5> good;
+  array[18] real<lower = 0, upper = 0.5> bad;
+}
+```
+
+The `model` block would then loop over the data to evaluate the numerator of Bayes' Rule in log-units, using indices to pick out the appropriate values. Note that you will have to think about prior distributions over the $\left(0, \frac{1}{2}\right)$ interval, although a prior on $\left[0,1\right]$ or $\mathbb{R}$ would work, as long as the hyperparameters are given and it does not put too much probability on inadmissible values.
+
+In the `generated quantities` block, you should create a vector called `log_lik` that evaluates the contribution of each row in the data toward the log-likelihood.
+
+## Conditioning on the Data
+
+Use the `cmdstanr` package for R or the `cmdstanpy` library for Python to compile the Stan program from the previous subproblem and draw from the posterior distribution of the parameters, conditional on the priors and the first two rounds of the St. Jude Championship.
+
+Plot the posterior (kernel) density of the `good` and `bad` values for each of the 18 holes in a $6 \times 3$ grid. How would you describe the important features of their distribution?
+
+# Hierarchical Model
+
+## Stan Program
+
+Write a Stan program that conditions on the data from the first two rounds of the St. Jude Championship where the probability of a "good" and a "bad" shot depends not only on the hole in question but also on the golfer. Recall that the Stan language does not support character strings, so you will have to map from the golfer's name in `dataset` to consecutive integer identification numbers in order to account for the golfer effects.
+
+The `parameters` block should declare hole-effects and golfer-effects that are collections of unrestricted real numbers. In addition, the `parameters` block should declare a few unknown parameters that govern the distribution of the hole-effects and the golfer-effects to make it a hierarchical model.
+
+The `model` block of this Stan program should create a linear predictor underlying the probability of the golfer in question hitting a good shot on the hole by adding the corresponding hole-effect to the golfer-effect. You can then apply the standard logistic CDF (which is the `inv_logit` function in the Stan language) to this linear predictor to map from $\mathbb{R}$ to $\left(0,1\right)$ and then divide it by $2$ to map to $\left(0,\frac{1}{2}\right)$. Then, do similar steps to construct the probability of the golfer in question hitting a bad shot on the hole.
+
+In the `generated quantities` block, you should create a vector called `log_lik` that evaluates the contribution of each row in the data toward the log-likelihood.
+
+## Conditioning on the Data
+
+Use the `cmdstanr` package for R or the `cmdstanpy` library for Python to compile the Stan program from the previous subproblem and draw from the posterior distribution of the parameters, conditional on the priors and the first two rounds of the St. Jude Championship.
+
+Based on the posterior distribution, would you say in general that golfers who have a higher propensity to hit good shots are less likely to hit bad shots or is it more the case that golfers differ in their aggressiveness (either hitting a good or a bad shot but rarely a mediocre one)?
+
+# Model Comparison
+
+Which of the two models that you estimated is expected to better predict future rounds of data by the same golfers? How do you know? In point of fact, about half of the golfers are eliminated after the second round and the remaining half plays another round on Saturday and a final round on Sunday.
