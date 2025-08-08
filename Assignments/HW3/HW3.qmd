@@ -1,5 +1,5 @@
 ---
-title: "GR5224 Homework 3, Due August 7, 2025 at 6PM"
+title: "GR5224 Homework 3, Due August 11, 2025 at 6PM"
 format: 
   pdf:
     number-sections: true
