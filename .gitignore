@@ -41,4 +41,3 @@ vignettes/*.pdf
 # Output files from rendering
 *_files/
 *.html
-*.csv
