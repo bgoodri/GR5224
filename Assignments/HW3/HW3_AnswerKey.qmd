@@ -1,0 +1,177 @@
+---
+title: "GR5224 Homework 3 Answer Key"
+format: 
+  pdf:
+    number-sections: true
+    documentclass: article
+    include-in-header:
+      text: |
+        \usepackage{amsmath}
+        \usepackage{fullpage}
+fig-cap-location: top        
+pdf-engine: xelatex
+editor: visual
+execute: 
+  echo: true
+keep-tex: true
+---
+
+This homework was inspired by a recent [paper](https://www.degruyterbrill.com/document/doi/10.1515/jqas-2024-0036/html?lang=en&srsltid=AfmBOorj2qK9I3i6T4HJazd4FWhOob-mwnNbvEy7vfDNc99Jy6THn8Fe) that applied hierarchical models to golf data using Stan.
+
+```{r}
+#| message: false
+library(dplyr)
+dataset <- readr::read_csv("dataset.csv", col_types = "icii") |> 
+  arrange(hole, Name, round) # sort order important for both Stan programs!
+```
+
+One way of simulating the number of strokes it takes a golfer to hit the ball into the hole is given by this Stan function:
+
+```{stan, output.var="golf_rng", eval = FALSE}
+int golf_rng(int par, real good, real bad) {
+  if (par < 3) reject("par must be at least 3");
+  if (good <= 0 || good >= 0.5) reject("good must be on (0,0.5)");
+  if (bad  <= 0 || bad  >= 0.5) reject("bad must be on (0,0.5)");
+  vector[3] theta = [bad, 1 - (good + bad), good]';
+  int effective_par = par;    // how many strokes anticipated to finish
+  int strokes = 0;            // counter for strokes actually made
+  while (effective_par > 0) { // eventually terminates because bad < 1
+    strokes += 1;             // golfer hits the ball, resulting in ...
+    int x = categorical_rng(theta) - 1; // 0, 1, or 2
+    effective_par -= x;       // now how many strokes anticipated to finish
+  }
+  return strokes;
+}
+```
+
+The idea is that at the start of a hole, the `par` value is the number of strokes that are anticipated. After each stroke, the `effective_par` for the hole either stays the same (for a bad shot), decreases by one (for a mediocre shot), or decreases by two (for a good shot). Thus, the par values for the St. Jude Championship need to be passed to the `data` block of a Stan programs in order to evaluate the log-likelihood (which is given by the somewhat complicated function `golf_lpmf`).
+
+```{r}
+par_values <- c(4, 4, 5, 3, 4, 4, 4, 3, 4, 4, 3, 4, 4, 3, 4, 5, 4, 4) |> 
+  as.integer()
+```
+
+# Flat Model
+
+## Stan Program
+
+```
+{{< include simple.stan >}}
+```
+
+## Conditioning on the Data
+
+```{r}
+#| output: false
+library(cmdstanr)
+options(mc.cores = parallel::detectCores())
+```
+
+```{r}
+#| label: simple
+#| cache: true
+mod_simple <- cmdstan_model("simple.stan")
+```
+
+```{r}
+#| label: post_simple
+#| cache: true
+#| output: false
+dat <- list(J = n_distinct(dataset$Name),
+            strokes = dataset$strokes,
+            par_values = par_values, 
+            good_m = 0.2, good_s = 0.1,
+            bad_m  = 0.2, bad_s  = 0.1)
+post_simple <- mod_simple$sample(dat, output_dir = getwd())
+```
+
+```{r}
+post_simple$cmdstan_diagnose()
+```
+
+```{r}
+#| fig-cap: "Posterior Density of the Probability of Good and Bad Shots by Hole"
+#| fig-height: 9
+#| fig-width: 6
+library(ggplot2)
+tibble(parameter = c(post_simple$draws(c("good", "bad"))),
+       hole = rep(1:18, each = 1000 * 4 * 36 / 18),
+       quality = rep(c("good", "bad"), times = 1000 * 4 * 36 / 2)) |> 
+  ggplot() +
+  geom_density(aes(x = parameter, color = quality)) +
+  facet_wrap(~hole, nrow = 6) +
+  theme(legend.position = "top")
+```
+
+For each hole, the posterior density of the probability of good and bad shots are almost indistinguishable. However, for several holes, the densities are bimodal.
+
+# Hierarchical Model
+
+## Stan Program
+
+```
+{{< include hierarchical.stan >}}
+```
+
+## Conditioning on the Data
+
+```{r}
+#| label: hierarchical
+#| cache: true
+mod_hierarchical <- cmdstan_model("hierarchical.stan") 
+```
+
+```{r}
+#| label: post_hierarchical
+#| cache: true
+#| output: false
+dat <- list(J = n_distinct(dataset$Name),
+            strokes = dataset$strokes,
+            par_values = par_values,
+            hole_m = c(-1, 1),
+            hole_s = c(0.25, 0.25),
+            golfer_m = c(0, 0),
+            golfer_s = c(0.1, 0.1),
+            hole_r = c(1, 1),
+            golfer_r = c(1, 1))
+post_hierarchical <- mod_hierarchical$sample(dat, output_dir = getwd()) 
+```
+
+```{r}
+post_hierarchical$cmdstan_diagnose()
+```
+
+```{r}
+post_hierarchical$summary(c("hole_mu", "golfer_mu", 
+                            "hole_sigma", "golfer_sigma",
+                            "hole_rho", "golfer_rho")) |> 
+  select(-rhat) # rhat was basically fine
+```
+
+
+```{r}
+golfer_std <- 
+  tibble(parameter = matrix(c(post_hierarchical$draws("golfer_std")),
+                            ncol = 2),
+         golfer = rep(unique(dataset$Name), each = 4000))
+group_by(golfer_std, golfer) |>
+  summarize(rho = cor(parameter[ , 1], parameter[ , 2])) |>
+  arrange(rho) |>
+  print(n = 69)
+```
+
+There is not much correlation within golfers in their propensity to hit good and bad shots, and the correlations were about as likely to be positive as negative. Thus, these data are not supportive of the idea that there are good and bad golfers, but it would be difficult to ever make that conclusion from two rounds of data on professionals.
+
+# Model Comparison
+
+```{r}
+#| message: false
+library(loo)
+```
+```{r}
+#| eval: false
+loo_compare(list(simple = post_simple$loo(),  
+                 hieararchical = post_hierarchical$loo()))
+```
+
+Both models are expected to predict future data (on the same golfers, on the same course) about equally well, although the hierarchical model may be slightly better. With more data, the advantages of the hierarchical model would be more apparent.
