@@ -1,0 +1,293 @@
+---
+title: "Causal Models"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## Fisherian / Randomization / Design
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+
+- The data are NOT a random sample from some population
+- Randomization is between treatment and control status
+- If there are $N$ observations, there are ${N \choose N / 2}$ ways to assign to treatment
+- If the treatment has no effect, then $\dots$
+```{r, fig.keep='none'}
+N <- 20
+treated <- sample(1:N, size = 10, replace = FALSE); control <- (1:N)[-treated]
+y <- rnorm(N)
+diffs <- combn(N, N / 2, FUN = function(group_1) {
+  group_2 <- (1:N)[-group_1]
+  return(mean(y[group_1]) - mean(y[group_2]))
+})
+ATE <- mean(y[treated]) - mean(y[control])
+mean(abs(diffs) > abs(ATE)) # p-value
+hist(diffs, prob = TRUE, main = "", xlab = "Average Group Difference")
+abline(v = ATE, col = "red")
+```
+
+## Plot based on Previous Slide
+
+```{r, echo = TRUE, small.mar = TRUE, fig.width=10, fig.height=4}
+hist(diffs, prob = TRUE, main = "", xlab = "Average Group Difference")
+abline(v = ATE, col = "red")
+legend("topleft", legend = "Estimated ATE", lty = 1, col = 2, bg = "lightgrey")
+```
+
+## Potential Outcomes Framework
+
+- Each of $N$ observations has TWO functions, $Y_{i1}$ and $Y_{i0}$, that
+  yield the outcome if $i$ were in treatment or control
+- Individual Causal Effect (ICE) is defined as $\Delta_i = Y_{i1} - Y_{i0}$
+- Outcome is $y_i = t_i Y_{i1} + \left(1 - t_i\right)Y_{i0}$ where $t_i \in \{0,1\}$
+- Fundamental Problem of Causal Inference: Either $Y_{i1}$ or $Y_{i0}$ is not observed
+- Average Causal / Treatment Effect (ACE or ATE) can be estimated as
+  $\widehat{\Delta} = \frac{1}{N/2}\sum_{i:t_i = 1} y_i - \frac{1}{N/2}\sum_{i:t_i = 0} y_i$
+  and is unbiased if $t_i$ is conditionally independent of both $Y_{i1}$ and $Y_{i0}$, given
+  a (possibly empty) set of covariates $\mathbf{x}_i$
+
+## Graphical Causal Models Framework
+
+- Potential Outcomes framework is widespread
+- Graphical Causal Models framework is widespread in epidemiology and to a lesser extent,
+  in sociology and psychology but is overkill for estimating ACEs in experiments
+- A theorem in one framework implies a theorem in the other
+- Directed Acyclic Graphs can serve multiple purposes:
+
+  1. A language to communicate theories
+  2. Identification Analysis: Whether a theory implies the ACE could be calculated in a 
+    population
+  3. Testable Implications: What observables are independent?
+
+## Directed Acyclic Graphs (DAGs)
+
+- Three elements to a DAG:
+
+  1. Variables / Nodes
+  2. Arrows from an earlier (in time) node to a later node
+  3. Absence of arrows between nodes, which implies ACE $=0$
+  
+- $A \rightarrow B$ means that if $A$ were experimentally manipulated there MAY be a
+  non-zero ACE that is assumed to be unmediated by any other variable
+- Cannot start at any node, follow arrows, and return to start
+- DAGs are usually written w/o distributional assumptions
+
+## Three Sources of Association
+
+1. Direct, $A \rightarrow B$, or indirect, $A \rightarrow C \rightarrow B$, causation
+2. Confounding due to common cause(s): $A \leftarrow C \rightarrow B$
+3. Selection due to conditioning on a "collider", $A \rightarrow \fbox{C} \leftarrow B$,
+  or a (not necessarily direct) descendant of a collider,
+  $\begin{matrix}A & \rightarrow & C & \leftarrow & B \\
+                   &             & \downarrow & & \\
+                   &             & \fbox{D} & & \end{matrix}$, where boxes
+  indicate stratification or otherwise perfect conditioning
+
+- Technically, a collider has to be defined with reference to a path. In the above,
+  $C$ is a collider along the path from $A$ to $B$ but $C$ is not a collider on the
+  path from $A$ to $D$
+
+## Three Mistakes in Calculating the ACE
+
+1. Intercepting: $X \rightarrow \fbox{M} \rightarrow Y$ or $X \rightarrow Y \rightarrow \fbox{S}$
+2. Failure to condition on a confounder:
+  $\begin{matrix}X & \rightarrow & Y \\
+                 \uparrow & \nearrow &\\
+                 C   &             & \end{matrix}$
+3. Endogenous selection due to conditioning on (a descendent of) a collider:
+  $\begin{matrix}X & \rightarrow & Y \\
+                 \downarrow & \swarrow &\\
+                 \fbox{C}   &             & \end{matrix}$
+
+
+## Paths in DAGs
+
+- A path is a sequence of connected nodes, regardless of the arrows' direction
+
+  1. Causal Path: A path that exclusively follows the arrows
+  2. Non-causal Path: Any other path
+  
+- What are the paths below and are they causal or not?
+$$\begin{matrix}X & \rightarrow & M \\
+                  & \nearrow &\\
+                W & \rightarrow & Y\end{matrix}$$
+                
+
+## Blocking / Closing a Path
+
+1. Condition on a noncollider along a path: $A \leftarrow \fbox{C} \rightarrow B$
+2. Refrain from conditioning on a (descendant of a) collider along a path: $A \rightarrow C \leftarrow B$
+
+- If a path is not blocked it is open or unblocked
+- Two variables are "d-separated" iff all paths between them are blocked by conditioning on a
+  possibly empty set of variables $\{Z\}$, in which case they are conditionally independent
+- Two variables that are not "d-separated" are almost surely not conditionally independent
+
+## Adjustment and Backdoor Criteria
+
+- Adjustment Criterion is satisfied iff
+
+  1. All causal paths from $X$ to $Y$ are open
+  2. All non-causal paths from $X$ to $Y$ blocked by a (possibly empty) set of variables $\{Z\}$
+
+- If the adjustment criterion is satisfied, ACE of $X$ on $Y$ is identified and can be
+  consistently estimated with a (possibly weighted) difference in means
+  
+- Backdoor Criterion implies Adjustment Criterion but not vice versa
+
+## Dagitty
+
+- There is a [website](https://dagitty.net), that implements the most common and useful identification strategies for DAGs and a R package:
+```{r, small.mar = FALSE, fig.height=3, fig.width=9}
+library(dagitty); g <- dagitty( "dag{ x -> y ; x <-> m <-> y }" ); plot(graphLayout(g))
+```
+
+## Double-headed Arrows
+
+- The dagitty R package and a lot of authors use $A \leftrightarrow B$ as a shorthand
+  for a $A \leftarrow U \rightarrow B$ with $U$ unobserved or for
+  $\begin{matrix}X & \leftrightarrow & Y \\
+                 \downarrow & \swarrow &\\
+                 \fbox{C}   &             & \end{matrix}$ due to conditioning
+- Any path involving a $\leftrightarrow$ is a non-causal path
+
+## Contrasts with Common Practice
+
+- Supervised learning generally does not utilize DAGs. Models are scored on how well they predict the outcome (in the testing set), which is better if you condition on descendants of the outcome, mediators, some colliders, etc.
+- Regressions generally do not estimate the causal effect of all covariates and rarely
+  estimate the causal effect of any covariate. They implicitly correspond to a DAG like:
+$$\begin{matrix} & \nearrow \fbox{X}_1 & \searrow &  \\
+              C  & \rightarrow \fbox{X}_2 & \rightarrow & Y\leftarrow \epsilon\\
+                 & \searrow \fbox{X}_3 & \nearrow & \end{matrix}$$
+
+## CausalQueries R Package
+
+- All DAGs where all observed nodes are binary have a (multinomial) likelihood function
+  that can be combined with priors on the "type" parameters to do Bayesian inference
+- The CausalQueries R Package takes a DAG, priors, and data and uses [Stan](https://github.com/integrated-inferences/CausalQueries/blob/master/inst/stan/simplexes.stan) to draw from the
+  posterior distribution of the parameters given the data & priors
+- Useful for describing your beliefs about (not necessarily average) causal effects in
+  many situations that are not simple experiments
+  
+## Bertrand and Mullainathan (2004) {.smaller}
+
+- Resumes were created for a fictitious person applying for an entry-level job but
+  the name at the top of the resume was randomized to make the company think the applicant 
+  was probably black / white / male / female. The outcome is whether the company called the
+  applicant to schedule an interview, etc.
+```{r, message = FALSE}
+library(dplyr)
+ROOT <- "https://raw.githubusercontent.com/kosukeimai/qss/"
+FILE <- "refs/heads/master/CAUSALITY/resume.csv"
+resume <- readr::read_csv(paste0(ROOT, FILE), show_col_types = FALSE)
+resume_grouped <- group_by(resume, race, sex, call) %>% summarize(n = n())
+resume_grouped
+```
+
+## Basic Frequentist Inference
+
+```{r}
+prop.test(matrix(resume_grouped$n, ncol = 2, byrow = TRUE))
+```
+
+> - Many questions prohibited, such as "How sure are you that companies favor white / male 
+  over black / female?"
+
+## Principal Stratification
+
+- If $X$ and $Y\left(X\right)$ are both binary, then there are $2^2 = 4$ types of observations:
+
+Data | Type
+-----| -----
+$Y\left(x\right) \neq x$     | Adverse
+$Y\left(x\right) = x$        | Beneficial
+$Y\left(x\right) = 0 \forall x$ | Chronic
+$Y\left(x\right) = 1 \forall x$ | Destined
+
+- Chronic and destined types have zero ICE
+- The ACE is Beneficial - Adverse proportions
+
+## Setup for Basic Bayesian Inference {.smaller}
+
+<div class="columns-2">
+```{r, message = FALSE}
+library(CausalQueries)
+(model <- make_model("race -> call <- sex"))
+```
+</div>
+
+## Multinomial Distribution
+
+* The multinomial distribution over $\Omega = \{0,1,\dots,n\}$ has a PMF
+  $\Pr\left(\left.x\right|\pi_1,\pi_2,\dots,\pi_K\right) =
+  n!\prod_{k=1}^K \frac{\pi_k^{x_k}}{x_k!}$ where the parameters satisfy
+  $\pi_k \geq 0 \forall k$, $\sum_{k=1}^K \pi_k = 1$, and $n = \sum_{k=1}^K x_k$
+
+* The multinomial distribution is a generalization of the binomial distribution to the case that
+  there are $K$ possibilities rather than merely failure vs. success
+* Categorical is a special case where $n = 1$
+* The multinomial distribution is the count of $n$ independent categorical random variables
+  with the same $\pi_k$ values
+* Draw via `rmultinom(1, size = n, prob = c(pi_1, pi_2, ..., pi_K))`
+
+
+## Dirichlet Distribution
+
+- Dirichlet distribution is over the parameter space of PMFs --- i.e. $\pi_k \geq 0$ and 
+  $\sum_{k = 1}^K \pi_k = 1$ --- and the Dirichlet PDF is
+$f\left(\boldsymbol{\pi} \mid \boldsymbol{\alpha}\right) = \frac{1}{B\left(\boldsymbol{\alpha}\right)}\prod_{k=1}^{K}\pi_{k}^{\alpha_{k}-1}$
+where $\alpha_{k}\geq0\,\forall k$ and the multivariate Beta
+function is $B\left(\boldsymbol{\alpha}\right)=\frac{\prod_{k=1}^{K}\Gamma\left(\alpha_{k}\right)}{\Gamma\left(\prod_{k=1}^{K}\alpha_{k}\right)}$
+where $\Gamma\left(z\right)=\int_{0}^{\infty}u^{z-1}e^{-u}du$ is
+the Gamma function
+- $\mathbb{E}\pi_{i}=\frac{\alpha_{i}}{\sum_{k=1}^{K}\alpha_{k}}\,\forall i$. The mode of $\pi_{i}$ is $\frac{\alpha_{i}-1}{-1+\sum_{k=1}^{K}\alpha_{k}}$
+if $\alpha_{i}>1$
+- Iff $\alpha_{k}=1\,\forall k$, $f\left(\left.\boldsymbol{\pi}\right|\boldsymbol{\alpha}=\mathbf{1}\right)$
+is constant over $\Theta$ (simplexes)
+- Beta distribution is a special case of the Dirichlet if $K = 2$
+
+## Conditioning on the Resume Data {.smaller}
+
+- Default priors on types are flat Dirichlet, which get mapped into simplexes for the multinomial
+  likelihood function
+```{r, resume, cache = TRUE, results="hide", message = FALSE}
+model <- update_model(model, seed = 12345,
+                      data = mutate(resume, race = race == "white", sex = sex == "female"))
+```
+```{r, query1, cache = TRUE}
+query_model(model, using = "posteriors", queries = 
+              c(race_ATE = "call[race = 0] - call[race = 1]", 
+                sex_ATE  = "call[sex = 0] - call[sex = 1]",
+                Pr_fine  = "call[race = 0, sex = 0] >= call[race = 1, sex = 1]"))
+```
+
+## Do Not Limit Yourself to Summaries
+
+- You can get all the posterior draws (for one query at a time)
+```{r, small.mar = TRUE, fig.width=9, fig.height=3.5}
+d <- query_distribution(model, using = "posteriors",
+                          query = "call[race = 0, sex = 0] - call[race = 1, sex = 1]")
+hist(d[ ,1], prob = TRUE, main = "", xlab = "Posterior Difference")
+```
+
+## Simple DAG for Instrumental Variables
+
+```{r, small.mar = FALSE, fig.height=5, fig.width=10}
+plot(make_model("Z -> X -> Y") %>% set_confound(confound = list("X <-> Y")))
+```
