@@ -1,0 +1,160 @@
+---
+title: "Review"
+author: "Ben Goodrich"
+format: revealjs
+editor: visual
+execute: 
+  echo: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## Exam
+
+```{=html}
+<script type="text/x-mathjax-config">
+MathJax.Hub.Register.StartupHook("TeX Jax Ready",function () {
+  MathJax.Hub.Insert(MathJax.InputJax.TeX.Definitions.macros,{
+    cancel: ["Extension","cancel"],
+    bcancel: ["Extension","cancel"],
+    xcancel: ["Extension","cancel"],
+    cancelto: ["Extension","cancel"]
+  });
+});
+</script>
+```
+-   Today is the last class
+-   Exam is Friday, August 15th from 6:10PM to 7:40PM
+-   Room is NOT Pupin 420, but rather the conference room on the 6th floor of Watson Hall, which is on 115th street, west of Broadway
+-   Exam will be like a homework
+
+## Bowling
+
+Bowling is a metaphor for success on $n$ tasks that are not independent but entails almost all the operations we need to do with probability. $$\Pr\left(x \mid n, \theta\right) = 
+\begin{cases}
+\frac{\log_{n + 1 + 1 / \theta}\left(1 + \frac{1}{n + 1 / \theta - x}\right)}
+{1 + \log_{n + 1 + 1 / \theta}\left(\theta\right)} \text{ if } \theta > 0 \\
+\frac{\log_{n + 1 - 1 / \theta}\left(1 + \frac{1}{x - 1 / \theta}\right)}
+{\log_{n + 1 - 1 / \theta}\left(1 + \theta\left(n + 1\right)\right)} \text{ if } \theta < 0 \\
+\frac{1}{n + 1} \text{ if } \theta = 0
+\end{cases}$$
+
+## Goals of Frequentists vs. Bayesians {.smaller}
+
+-   Frequentists are interested in $$\mathbb{E}\left[h\right] = \int_{-\infty}^\infty \cdots \int_{-\infty}^\infty h\left(x_1, \dots, x_N\right) f\left(x_1, \dots x_n \mid \theta\right)dx_1\dots dx_N,$$ where $h\left(\right)$ is a function of the sample, such as an estimator of $\theta$ or a function thereof
+
+-   Bayesians are interested in $$\mathbb{E}\left[g\right] = \int_{-\infty}^\infty \cdots \int_{-\infty}^\infty g\left(\theta_1, \dots \theta_K\right) f\left(\theta_1, \dots, \theta_K \mid x_1, \dots x_N\right) d\theta_1\dots d\theta_K,$$ where $g\left(\right)$ is a function of your posterior beliefs about the parameters, such as utility
+
+-   To mathematicians, $\mathbb{E}\left[h\right]$ and $\mathbb{E}\left[g\right]$ seem to be opposites
+
+-   To people who do not know math, $\mathbb{E}\left[h\right]$ and $\mathbb{E}\left[g\right]$ seem to be the same thing
+
+-   To scientists who know math, the Bayesian formulation is appealing because we are never given parameters $\left(\theta\right)$ but may be given data $\left(x_1, \dots x_N\right)$ that is not a sample
+
+## Supervised Learners vs. Bayesians
+
+-   Supervised learners are interested in a loss function $L\left(\mathbf{y}^\ast, \widehat{\boldsymbol{\theta}}\right)$ that depends on future data $\mathbf{y}^\ast$ and an estimate of $\boldsymbol{\theta}$ from past data (with some form of regularization)
+
+-   They guestimate $L\left(\mathbf{y}^\ast, \widehat{\boldsymbol{\theta}}\right)$ by randomly splitting the past data into 20% testing and 80% training, and evaluating $L$
+
+-   Bayesians get posterior predictive distributions of new data:\
+    $$f\left(y_{N + 1}, y_{N + 2}, \dots, y_{2N} \mid y_1, y_2, \dots, y_N\right) =\\ \int_\Theta f\left(y_{N + 1}, y_{N + 2}, \dots, y_{2N} \mid \boldsymbol{\theta}\right) f\left(\boldsymbol{\theta} \mid y_1, y_2, \dots, y_N\right) d\boldsymbol{\theta}$$
+
+## BioNTech / Pfizer Vaccine (1)
+
+-   Key quantities:
+
+    -   $\pi_v$: probability of infection among vaccinated
+
+    -   $\pi_c$: probability of infection among control
+
+    -   $\theta = \frac{\pi_v}{\pi_v + \pi_c}$: probability of vaccinated among infected $\left(n\right)$
+
+    -   $\mathrm{VE}\left(\theta\right) = \frac{1 - 2\theta}{1 - \theta} = \frac{ \frac{\pi_v + \pi_c}{\pi_v + \pi_c} - \frac{2\pi_v}{\pi_v +\pi_c} }{\frac{\pi_v + \pi_c}{\pi_v + \pi_c} - \frac{\pi_v}{\pi_v + \pi_c}} = \frac{\pi_c - \pi_v}{\pi_c} =1 - \frac{\pi_v}{\pi_c}$
+
+-   Historical precedent: Medical innovations are approved if $\mathrm{VE}\left(\frac{y}{n}\right) > 0.5$ and we reject the null hypothesis that $\mathrm{VE} = 0.3$ in favor of the alternative that $\mathrm{VE} > 0.3$, which requires evaluating the $p$-value $\Pr\left(\widehat{\theta} \leq \frac{y}{n} \mid \mathrm{VE} = 0.3\right)$
+
+## BioNTech / Pfizer Vaccine (2)
+
+-   Pfizer chose a beta prior on $\theta$ with $a \approx 0.7$ and $b = 1$ so that $\mathrm{VE}\left(\theta\right) \approx 0.3$ but uncertainty was high
+
+-   A beta prior with a binomial likelihood implies a beta posterior with $a^\ast = a + y$ and $b^\ast = b + n - y$
+
+-   This does not require simulation to obtain
+
+-   The implied prior distribution of $\mathrm{VE}\left(\theta\right)$ had a median of $0.3$ but heavy tails so that the expectation did not exist, there was a good chance it was negative, and the prior mode was close to $1$. That is not what scientists believed in 2019.
+
+## BioNTech / Pfizer Vaccine (3)
+
+-   Reparameterize: $\theta \equiv \frac{\mathrm{VE} - 1}{\mathrm{VE} - 2}$
+
+-   Put a normal, Cauchy, etc. prior on $\mathrm{VE}$ with a center at $0.3$
+
+-   Use the MCMC algorithm in Stan to draw $\mathrm{VE}$ and $\theta$
+
+-   Calculate $\Pr\left(\mathrm{VE} > 0.3 \mid n, y, \dots\right)$
+
+## BioNTech / Pfizer Vaccine (4)
+
+```         
+data {
+  int<lower = 0>  n;
+  int<lower = 0, upper = n> y;
+  real<upper = 1> m; real<lower = 0> s;
+}
+parameters {
+  real<upper = 1> VE;
+}
+transformed parameters {
+  real<lower = 0, upper = 1> theta = (VE - 1) / (VE - 2);
+}
+model {
+  target += normal_lpdf(VE | m, s);
+  target += binomial_lpmf(y | n, theta);
+}
+```
+
+## BioNTech / Pfizer Vaccine (5)
+
+-   What if $\mathrm{VE}$ is a function of the age of the person?
+-   Likelihood would have to be Bernoulli
+-   How would you write a Stan program to do that?
+
+## What Is Bayesian Analysis?
+
+::: incremental
+-   The distinguishing feature of Bayesian analysis is not Bayes Rule but rather using probability distributions to describe beliefs about unknowns, particularly in hierarchical models
+
+-   Things that are not Bayesian in that sense:
+
+    -   Frequentist point or interval estimators
+
+    -   Supervised learning optima or whatever early stopping is
+
+    -   "Empirical Bayes" that estimates priors from the data
+
+    -   Finding a posterior mode and stopping
+
+-   No one said Bayesian analysis produced the wrong answers; they said the questions should not be asked.
+:::
+
+## Four or Five Sources of Uncertainty {.smaller}
+
+::: incremental
+1.  Uncertainty about parameters in models
+2.  Uncertainty about which model is best
+3.  Uncertainty about what to do with the output of the (best) model(s)
+4.  Uncertainty about whether the software works as intended
+5.  Uncertainty about whether the (best) model(s) hold with other data
+:::
+
+. . .
+
+| Topic | Frequentist     | Bayesian           | Supervised Learning         |
+|-------|-----------------|--------------------|-----------------------------|
+| 1     | Non-existent    | Posterior          | Completely ignored          |
+| 2     | Test down       | ELPD, stacking     | One-shot cross-validation   |
+| 3     | Convention      | Decision theory    | Different conventions       |
+| 4     | Non-existent    | Stan warnings      | Not much                    |
+| 5     | Random sampling | Poststratification | Testing split from training |
+
