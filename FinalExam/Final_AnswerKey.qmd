@@ -1,0 +1,198 @@
+---
+title: "GR5224 Final Exam Answer Key"
+format: 
+  pdf:
+    number-sections: true
+    documentclass: article
+    include-in-header:
+      text: |
+        \usepackage{amsmath}
+        \usepackage{fullpage}
+        \usepackage{cancel}
+    keep-tex: true
+editor: visual
+execute: 
+  echo: true
+---
+
+# Malaysia Airlines Flight 370
+
+These plots come from a [book](https://link.springer.com/book/10.1007/978-981-10-0379-0) entitled *Bayesian Methods in the Search for MH370* and are under a Creative Commons license.
+
+## Prior Distribution
+
+![](prior.png)
+
+The mode is near $88.5$ degrees longitude and $-38.5$ degrees latitude, which is the mean vector under a bivariate normal approximation to this distribution. The correlation is fairly positive, which is why it generally runs northest to southwest. The interquartile range along the horizontal is about $90 - 87$ and the interquartile range along the vertical is about $-37.5 - -39$, and the standard deviations are approximately equal to interquartile ranges divided by $1.349$. But we might have to scale those a bit because the above distribution is slightly skewed and thus not exactly bivariate normal. We can then choose $\rho$ to put 85% of the density into the inner rectangle.
+
+```{r}
+library(mvtnorm)
+
+mu <- c(88.5, -38.5)
+sigma <- c(90 - 87, -37.5 - -39) / (1.349 * 1.1)
+
+ll <- c(86.1, -40)
+ul <- c(85.2, -39)
+lr <- c(93.0, -36)
+ur <- c(91.8, -35.5)
+
+f <- function(rho) {
+  pmvnorm(lower = c(86.1, -40), upper = c(93, -35.5),
+          mean = mu,
+          sigma = matrix(c(sigma[1]^2, rho * sigma[1] * sigma[2],
+                           rho * sigma[1] * sigma[2], sigma[2]^2),
+                         nrow = 2, ncol = 2)) - 0.85
+}
+(rho <- uniroot(f, lower = -0.999, upper = 0.999)$root)
+```
+
+```{r}
+#| message: false
+library(dplyr)
+library(ggplot2)
+grid_data <- 
+  tidyr::expand_grid(x = seq(from =  83, to =  96, length.out = 100),
+                     y = seq(from = -41, to = -34, length.out = 100)) |> 
+  mutate(density = dmvnorm(cbind(x, y), mean = mu, sigma = 
+                             matrix(c(sigma[1]^2, rho * sigma[1] * sigma[2],
+                                      rho * sigma[1] * sigma[2], sigma[2]^2),
+                         nrow = 2, ncol = 2)))
+ggplot(grid_data, aes(x = x, y = y, z = density)) +
+  geom_contour() +
+  labs(x = "Latitude",
+       y = "Longitude") +
+  coord_fixed()
+```
+
+## Fuel Update
+
+```{r}
+R <- 10^6
+sims <- 
+  tibble(x = rnorm(R, mean = mu[1], sd = sigma[1]),
+         y = rnorm(R, 
+                   mean = mu[2] + sigma[2] / sigma[1] * rho * (x - mu[1]),
+                   sd   = sigma[2] * sqrt(1 - rho^2))) |> 
+  filter(y > -37.5)
+
+ggplot(sims) + 
+  geom_hex(aes(x, y), show.legend = FALSE) +
+  labs(x = "Latitude",
+       y = "Longitude") +
+  coord_fixed()
+```
+
+In short, the posterior distribution shifts northeast if you condition on the fact that the plane did not fly in a straight line and thus would have run out of fuel before it reached $-37.5$ degrees longitude.
+
+## Satellite Update
+
+Suppose Ocean Infinity looks at the bottom of the ocean at $92.8$ degrees longitude and $-35.6$ degrees latitude and finds it is not there (which actually happened a few years ago). Now what? Well, you could look "near" that point, but you have no idea how far away from there would be reasonable because a point estimate does not convey uncertainty. Thus, you do not know whether it is a good decision to keep searching with a larger and larger radius.
+
+## Debris Update
+
+This plot is barely distinguishable from the original one
+
+![](posterior.png)
+
+If the plane crashed inside (or even near) the inner rectangle, that would imply that debris of the plane are eventually going to wash ashore in Africa rather than Australia, so the fact that happened does not provide much additional information beyond what you already had (trajectory and fuel consumption). Thus, the posterior and its prior are qualitatively the same.
+
+## Radio Update
+
+These four estimates are reasonably precise, but are different from each other. Basically, we do not know how much credibility to put into WSPR-based estimates because it has never been used to find a crashed airplane before (some people have had success tracking regular flights from takeoff to landing at airports). If these were the only four possibilities, we could evaluate how likely it is the plane is within 30 kilometers of each of them under the prior. However, the ocean is continuous, so it is not clear how much probability we should assign to the even that it is not within 30 kilometers of any of those four points. Thus, it is difficult to say how much the WSPR data will help Ocean Infinity but they have hired Bayesian consultants who have provided a lot more information than what is contained in this subproblem.
+
+## Ocean Infinity
+
+If it took \$16 million worth of non-fixed costs, then it would require a success probability of about at $\frac{16}{70} \approx 0.23$ to make Ocean Infinity's decision a good one, which seems like a stretch to think that would happen in six weeks. However, there is some chance Ocean Infinity finds the plane in less than six weeks, in which case the non-fixed costs would be less and you could justify doing the search with a somewhat lower chance of success. In addition, since Ocean Infinity is a private company they are not required to disclose such information, but it is possible they could finance the expedition by offering percentages of the \$70 million in exchange for a certain amount of up-front money, which is basically what any start-up does. If so, then Ocean Infinity would be transferring some of the risk onto investors and not be at much risk of going bankrupt if the search fails. It might be a worthwhile gamble, but it is definitely a gamble as I doubt anyone thinks the success probability is greater than $\frac{1}{2}$.
+
+\newpage
+
+# September Federal Reserve Meeting
+
+## Stan Program
+
+```         
+{{< include fed.stan >}}
+```
+
+## Priors
+
+The normal family can be justified in many ways, such as it is the least informative prior for a real random variable with a given expectation and variance. Some of those variables are bounded, but they are unlikely to be close to the bounds. The values of the objects passed to the data block can be chosen to make each of them somewhat weakly informative.
+
+It is more noteworthy that $\beta$ is constrained to be between $0$ and $1$, which rules out both negative dependence between consecutive days and explosive dynamics. Similarly, $\theta$ is constrained to be positive as the number of days between any day and September 17, 2025 dwindle.
+
+## Posterior Distribution
+
+```{r}
+CME_FedWatch <- readr::read_csv("CME_FedWatch.csv", show_col_types = FALSE)
+CME_FedWatch <- mutate(CME_FedWatch, 
+                       days = as.Date("2025-09-17") - 
+                         as.Date(Closing_date, format = "%m/%d/%Y"),
+                       days = as.integer(days))
+```
+
+```{r}
+#| output: false
+library(cmdstanr)
+```
+
+```{r}
+#| label: fed
+#| cache: true
+#| output: false
+mod <- cmdstan_model("fed.stan")
+post <- mod$sample(data = list(n = nrow(CME_FedWatch),
+                               y = CME_FedWatch$Small_cut,
+                               days = CME_FedWatch$days,
+                               alpha_m = 0, alpha_s = 2,
+                               beta_m  = 0.75, beta_s = 0.1,
+                               omega_m = -2, omega_s = 1,
+                               theta_m = 0.3, theta_s = 0.1),
+                   seed = 8152025,
+                   output_dir = getwd())
+```
+
+```{r}
+post$cmdstan_diagnose()
+```
+
+```{r}
+post$draws(c("alpha", "beta"), format = "data.frame") |> 
+  ggplot(mapping = aes(x = alpha, y = beta)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "red")
+```
+
+These two margins of the posterior distribution are positively correlated to a moderate degree.
+
+## Influential Observations
+
+```{r}
+(loo_post <- post$loo(save_psis = TRUE))
+```
+
+No individual day was so influential as to invalidate the PSISLOO estimator of the ELPD in the event we had another model to compare it with.
+
+## Posterior Predictive Checks
+
+```{r}
+#| warning: false
+library(bayesplot)
+ppc_loo_pit_overlay(y = qlogis(CME_FedWatch$Small_cut),
+                    yrep = post$draws("y_rep", format = "matrix"),
+                    psis_object = loo_post$psis_object)
+```
+
+This is not great, but it is not horrible. Clearly, the density is not normal with too much in the middle and not enough in the tails, so the calibration is far from perfect. However, the magnitude of the deviations from uniformity are not that extreme. It is a classic example of a posterior predictive check that seems worse than it is, but only because Bayesians look.
+
+## Prediction
+
+```{r}
+post$draws("prob", format = "data.frame") |> 
+  ggplot() + 
+  geom_density(aes(x = `prob[22]`)) + 
+  geom_vline(aes(xintercept = last(CME_FedWatch$Small_cut)), color = "red") +
+  labs(x = "Probability of a small interest rate cut",
+       y = "Density")
+```
+
+Although the probability of a small interest rate cut was high (`r last(CME_FedWatch$Small_cut)`) on August 14th, there is almost a month until the next Federal Reserve meeting, at a lot can change by then (e.g. firing one of the governors). Thus, there is an asymmetric distribution of probabilities where the mode is similar to what it was on August 14th but the left tail is somewhat long and there is not much room to go right. In point of fact, the probability of a small interest rate cut has dropped to about $0.85$ as of August 28th.
